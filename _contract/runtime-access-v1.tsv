@@ -21,6 +21,9 @@ schema_version	access	scope	read	write
 1	read-only	system-runtime	dependency-read	deny
 1	read-only	public-canon	allow	deny
 1	read-only	exact-project	allow	deny
+1	read-only	bounded-worker-exact-project	deny	deny
+1	read-only	worker-read-manifest-path	allow	deny
+1	read-only	exact-memory-snapshot	allow	deny
 1	read-only	exact-notes	allow	deny
 1	read-only	isolated-runtime-scratch	allow	allow
 1	read-only	ambient-home	deny	deny

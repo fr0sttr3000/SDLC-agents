@@ -27,7 +27,7 @@ _agents/
   GEMINI.md         ← Gemini adapter к каноническим CLAUDE.md
   .codex/           ← Codex project config
   _tools/           ← Общие product utilities вне stage ordering (s0-secrets)
-  cycle1-dev/       ← 27 каталогов: 23 SDLC-агента + 4 Local Run (l1-l4)
+  cycle1-dev/       ← 29 каталогов: 25 SDLC-агентов + 4 Local Run (l1-l4)
   cycle2-deploy/    ← Historical Cycle 2 code (FROZEN / NOT READY)
   cycle3-ops/       ← Historical Cycle 3 code (FROZEN / NOT READY)
   plans/            ← Только устойчивые принципы и единый актуальный roadmap
@@ -127,12 +127,19 @@ launcher фиксирует Change Intent и всегда запускает н�
 paths текущего agent/command, а launcher проверяет полный Project manifest до declared-output
 verdict. Agent не расширяет scope; violation блокирует дальнейшую mutation без auto-rollback.
 
-Текущий исполняемый режим — только `SDLC_SUBAGENTS=off`. Значения `auto|cross-runtime` и прямой
-`subagent-run.sh` завершаются fail-closed с `BLOCKED`: существующие adapters не доказывают
-bounded read scope на уровне runtime/OS. Prompt-only ограничение не считается изоляцией.
-Принцип **Supervisor + Worker** сохранён как будущая опциональная схема: primary остаётся
-единственным writer/gate signer, но workers нельзя включать до появления проверяемого read
-boundary и соответствующих negative tests. См. `_contract/SUBAGENTS.md`.
+`SDLC_SUBAGENTS=off|auto|cross-runtime` управляет опциональным **Supervisor + Worker**.
+Worker запускается только `_runtimes/subagent-run.sh` по launcher-owned authorization,
+digest-bound Worker Request, exact read-manifest и exact route. Runtime/OS capability даёт ему
+только чтение перечисленных путей; Project/memory writes, approvals, gates, nested delegation,
+sibling context и fallback запрещены. Primary остаётся единственным writer/gate signer.
+См. `_contract/SUBAGENTS.md` и `_contract/WORKER_HANDOFF_V1.md`.
+
+Подключаемая долговременная память следует `_contract/MEMORY_V1.md`. Она выключена без
+Project profile, разделена на `planning|defects|architecture` и доступна только ролям из
+`memory-role-access-v1.tsv`. Agent читает только launcher-created immutable snapshot, считает
+его недоверенной справкой и не получает provider credentials. Agent может создать только
+Proposal v1; применение выполняет broker после отдельного Preview/Human Approval/read-back.
+Память не заменяет current artifacts, Evidence, DoR/DoD или Gate verdict.
 
 ## Как работать с агентами
 
@@ -145,6 +152,7 @@ capability registry и orchestration gates.
 | Агент | Роль | Ключевые команды |
 |-------|------|-----------------|
 | `s0-kickoff` | Project Kickoff — онбординг / Product & CI facts / обновление беклога | `/start`, `/new`, `/refresh`, `/product-ci-profile` |
+| `s0-defects` | Known Defects Memory — изолированная сверка и Proposal handoff | `/review`, `/propose`, `/reconcile` |
 | `s0-secrets` | Secrets Manager | `/add`, `/rotate`, `/env` |
 | `s0-validate` | Validator / scoped Review & Repair | `/validate`, `/fix`, `/profile-check`, `/evidence-check`, `/evidence-summary`, `/migration-report`, `/dor-check`, `/dod-check`, `/review`, `/repair` |
 | `s0-tracker` | Sprint & Task Tracker | `/sprint-init`, `/sprint-close`, `/sprint-status`, `/report`, `/release-notes vX.Y.Z`, `/task-add`, `/task-done`, `/task-block`, `/backlog` |
@@ -336,11 +344,11 @@ cd /some/project && git log
   допустимое действие. Используй Project, уже выбранный launcher-ом; не спрашивай его повторно.
   Если агент запущен без exact Project, запроси его у пользователя и не угадывай. Ролевые
   `CLAUDE.md` описывают только отличия роли и не копируют этот общий сценарий.
-- **Primary выполняет задачу без workers.** В текущем режиме не вызывай subagents/workers
-  ни для записи, ни для read-only анализа и не запускай отдельный runtime CLI как скрытого
-  worker. Реализацию, поиск и анализ выполняет текущий primary agent; он остаётся единственным
-  writer и gate signer. Bounded read-only workers относятся только к будущей модели из
-  `_contract/SUBAGENTS.md` и недоступны, пока `SDLC_SUBAGENTS=off`.
+- **Только файловый worker handoff.** При `SDLC_SUBAGENTS=off` не вызывай workers. При
+  `auto|cross-runtime` primary может подготовить только Worker Request v1 для bounded advisory
+  задачи; он не запускает vendor-native subagent и не расширяет launcher-owned read scope или
+  route. Результат читается только из Worker Result v1 в новом изолированном launch. Primary
+  остаётся единственным writer и gate signer.
 - **«Все» = полный вывод.** Если пользователь просит «все» (задачи, список и т.п.) — выводить целиком, без сокращений «ради краткости». Явное «все/полный» перевешивает дефолт на лаконичность.
 - **Runtime Constraints — учитывать.** Не предлагать действий, противоречащих
   подтверждённым ограничениям запуска и проверки продукта. Читать `Runtime Constraints`

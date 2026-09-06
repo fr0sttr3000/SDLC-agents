@@ -18,6 +18,8 @@ Before Claude starts, the shared dispatcher applies Runtime Access v1 through Li
 public canon is read-only, exact Project/notes rights follow command access, and ambient HOME,
 siblings and runtime-denied roots receive no capability. Missing support or enforcement fails
 closed.
-Workers remain `BLOCKED` because a tool allowlist does not prove an exact bounded read scope.
+Bounded workers are task-only and require launcher-owned request/read-manifest/route
+authorization. Landlock grants only exact manifest paths; Claude additionally receives only
+`Read,Glob,Grep` with `dontAsk` and no session persistence. Direct or mismatched dispatch blocks.
 
 No SDLC logic is stored in this adapter. It only describes how the universal contract is executed by Claude Code.

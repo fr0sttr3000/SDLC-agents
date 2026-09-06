@@ -1,45 +1,44 @@
 # Subagent Contract
 
-Supervisor + Worker — сохранённый опциональный принцип исполнения. Он не создаёт второй SDLC,
-не меняет artifact/gate/security contracts и никогда не передаёт worker-у ownership этапа.
+Supervisor + Worker — опциональный режим исполнения. Он не создаёт второй SDLC, не меняет
+artifact/gate/security contracts и никогда не передаёт worker-у ownership этапа.
 
-## Текущий исполняемый статус
+## Исполняемый статус
 
-**Workers: `BLOCKED / NOT SUPPORTED`.** Единственное допустимое значение —
-`SDLC_SUBAGENTS=off`.
+- `off` — default, workers не запускаются;
+- `auto` — тот же exact route, если adapter поддерживает capability-enforced read-only;
+- `cross-runtime` — отдельный exact worker runtime/host/provider/model/endpoint.
 
-- `SDLC_SUBAGENTS=auto|cross-runtime` отклоняется launcher-ом и `_runtimes/agent-run.sh`;
-- прямой `_runtimes/subagent-run.sh` всегда возвращает non-zero;
-- Cycle 2/3 target сначала отклоняется общим frozen guard как `FROZEN / NOT READY`;
-- legacy profile/task/max settings не включают capability и не обходят dispatcher;
-- silent fallback на другой runtime/model запрещён.
+`auto` берёт frozen exact route primary step. `cross-runtime` фиксирует один exact worker profile
+на execution plan; отдельная per-stage/per-agent worker-profile matrix в MVP не поддерживается.
 
-Причина fail-closed режима: текущие adapters способны запретить worker-у запись, но не доказывают
-ограничение чтения одним exact project scope на уровне runtime/OS. Prompt с `READ_SCOPE`, allowlist
-задач или последующая проверка supervisor-ом не являются security boundary.
+Поддержанный bounded worker route: Claude CLI, Codex CLI и local `codex-oss`; OpenAI Responses
+API доступен как отдельный read-only advisory host с явно разрешённым text bundle. Gemini CLI
+остаётся primary-only, пока его adapter не доказывает read-only capability. Silent fallback
+между routes/models запрещён.
 
-## Инварианты будущего включения
+Исполняемый формат, authorization и result описаны в `_contract/WORKER_HANDOFF_V1.md`.
 
-Workers можно вернуть только отдельным evidence-backed изменением, которое одновременно докажет:
+## Обязательная граница
 
-1. canonical active-agent guard применяется primary и worker dispatcher-ами;
-2. read scope ограничен capability-механизмом runtime/OS, а не текстом prompt;
-3. worker не имеет write tools, write mounts или доступа к sibling projects/secrets;
-4. environment строится allowlist-ом без vendor session state и secret values;
-5. nested delegation, gate signing и operational actions запрещены технически;
-6. negative fixtures покрывают `/`, HOME, sibling project, symlink/path traversal, frozen target,
-   secret leakage, write attempt и unsupported runtime;
-7. primary остаётся единственным writer/gate signer и проверяет advisory findings;
-8. worker failure означает `BLOCKED` или явный retry без fallback.
+1. Primary формирует только Worker Request v1 для одной bounded advisory задачи.
+2. Launcher фиксирует exact read-manifest и route, вычисляет их SHA-256 и создаёт authorization.
+3. `_runtimes/subagent-run.sh` принимает только launcher-owned files конкретного execution run.
+4. Новый sanitized task process получает public canon и только exact read paths. Весь Project,
+   ambient HOME, sibling Projects, VCS metadata, secrets и runtime-denied roots не монтируются.
+5. Worker не пишет в Project/notes/memory, не создаёт approvals, не подписывает gates, не
+   делегирует дальше и не выполняет external operational actions.
+   Connected-memory snapshot и memory-provider access worker-у не передаются.
+6. Dispatcher кодирует stdout в Worker Result v1. Другие workers и primary его не читают;
+   MVP показывает advisory result пользователю. Принятое заключение возвращается только через
+   обычный Project artifact и новый изолированный run.
+7. Любая ошибка, mismatch или недоступный exact route означает `BLOCKED`; fallback отсутствует.
 
-До выполнения всех условий нельзя публиковать capability matrix с поддержанными workers.
+Prompt, allowlist задач и последующая проверка supervisor-ом дополняют, но не заменяют
+runtime/OS capability boundary.
 
-## Допустимая будущая модель
+## Допустимые задачи
 
-Каждый пакет должен содержать один разрешённый task kind, один конкретный вопрос, exact read scope
-и формат ответа. Conversation history, secrets, sibling-worker results и unbounded context не
-передаются. Worker output остаётся advisory session data, а межэтапный handoff — только файловым.
-
-Подходящие задачи после будущего включения: bounded analysis/research/review и интерпретация уже
-полученных test results внутри active Cycle 1. Deploy, rollback, production drill, auto-heal,
-редактирование artifacts, подписание gates и любые frozen Cycle 2/3 actions запрещены.
+Только bounded `analysis|research|review|test-interpretation` внутри active Cycle 1. Deploy,
+rollback, production drill, auto-heal, редактирование artifacts, memory-provider access,
+подписание gates и любые frozen Cycle 2/3 actions запрещены.

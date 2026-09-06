@@ -2,6 +2,9 @@ schema_version	agent	command	capability	access	result_verifier	metadata_stages	m
 1	s0-secrets	/add	orchestrated-special	write	secret-provider-dispatch	-	-
 1	s0-secrets	/env	read-only-no-output	read-only	process-exit	-	-
 1	s0-secrets	/rotate	orchestrated-special	write	secret-provider-dispatch	-	-
+1	s0-defects	/reconcile	orchestrated-special	scoped-write	memory-proposal-dispatch	-	-
+1	s0-defects	/propose	orchestrated-special	scoped-write	memory-proposal-dispatch	-	-
+1	s0-defects	/review	read-only-no-output	read-only	process-exit	-	-
 1	l1-analyze	/analyze	orchestrated-special	write	local-repositories-dispatch	-	-
 1	l1-analyze	/impact	orchestrated-special	scoped-write	change-scope-l1-dispatch	-	-
 1	l2-setup	/setup	orchestrated-special	write	local-repositories-dispatch	-	-

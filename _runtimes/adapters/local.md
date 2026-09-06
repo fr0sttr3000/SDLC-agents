@@ -43,10 +43,9 @@ enforcement fails closed.
 
 ## Supervisor + Local Worker
 
-Local workers are currently `BLOCKED`, including built-in `codex-oss`. A read-only Codex sandbox
-prevents writes but does not by itself prove that reads are bounded to one exact project scope.
-`SDLC_SUBAGENTS=auto|cross-runtime` and direct worker execution therefore return non-zero until
-runtime/OS enforcement and negative fixtures prove the full boundary.
+Bounded local workers use `codex-oss` or read-only `openai-api` only through
+`_contract/WORKER_HANDOFF_V1.md`. Runtime/OS enforcement grants exact manifest reads instead of
+the whole Project. Direct or digest/route-mismatched execution returns non-zero; fallback is off.
 
 ## Hybrid routing
 

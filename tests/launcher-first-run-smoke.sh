@@ -61,14 +61,12 @@ SDLC_SUBAGENT_MAX=4 \
     [[ "$SDLC_SUBAGENT_MAX" == "4" ]]
   ' _ "$ROOT/sdlc.sh" || fail "explicit execution settings were overwritten"
 
-if XDG_CONFIG_HOME="$TMP_DIR/blocked-config-home" \
+if ! XDG_CONFIG_HOME="$TMP_DIR/worker-config-home" \
   AGENT_RUNTIME=codex CODEX_BIN=/bin/true SDLC_RUNTIME_ROUTING=single \
   SDLC_SUBAGENTS=auto SDLC_SUBAGENT_MAX=2 \
   bash -c 'source "$1"; initialize_first_run_execution_policy' _ "$ROOT/sdlc.sh" \
-  >"$TMP_DIR/blocked-workers.out" 2>&1; then
-  fail 'first run accepted legacy auto worker setting'
+  >"$TMP_DIR/workers-auto.out" 2>&1; then
+  fail 'first run rejected bounded auto worker policy'
 fi
-grep -Fq 'BLOCKED: workers отключены' "$TMP_DIR/blocked-workers.out" ||
-  fail 'first run did not explain fail-closed worker policy'
 
 echo "PASS: launcher first-run smoke"

@@ -1,0 +1,13 @@
+schema_version	agent	collection	read	propose_add	propose_supersede	propose_tombstone
+1	s0-kickoff	planning	allow	allow	allow	allow
+1	s0-tracker	planning	allow	allow	allow	allow
+1	s1-pm	planning	allow	allow	allow	allow
+1	s1-pmo	planning	allow	allow	allow	allow
+1	s1-finance	planning	allow	deny	deny	deny
+1	s2-ba	planning	allow	allow	allow	allow
+1	s2-po	planning	allow	allow	allow	allow
+1	s0-defects	defects	allow	allow	allow	allow
+1	s3-arch	architecture	allow	allow	allow	allow
+1	s3-security	architecture	allow	deny	deny	deny
+1	s3-rbac	architecture	allow	deny	deny	deny
+1	s3-dba	architecture	allow	deny	deny	deny

@@ -5,7 +5,7 @@ matrix from `runtime-access-v1.tsv`. Vendor prompts and vendor sandboxes are def
 they do not replace this boundary.
 
 The dispatcher canonicalizes every scope before launch. Public agent canon is readable but not
-writable. The exact Project and optional notes directory are readable in all task access modes.
+writable. The exact Project and optional notes directory are readable in primary task access modes.
 They are wholly writable only for `access=write`; for `access=scoped-write`, notes remain
 read-only and only digest-bound, existing Project paths selected by the launcher are writable.
 Creation is authorized by selecting an existing parent directory and remains subject to the
@@ -18,6 +18,12 @@ is itself part of the read-only public agent system.
 every launch. A missing, stale, oversized, traversing, symlinked or otherwise invalid table
 blocks before the model runtime starts. The table may grant `write` or subtract `deny`; it
 cannot make the Project, notes or public canon broadly writable.
+
+A bounded worker also uses `access=read-only`, but supplies a strict `schema_version/path`
+read manifest and digest. The dispatcher then does not grant the whole Project or notes tree:
+it grants only canonical manifest paths. An optional launcher-owned memory snapshot is a
+separate exact regular file with its own SHA-256. Missing, stale, traversing or symlinked
+inputs, snapshots outside the execution run, and manifests above 64 paths block before start.
 
 Checkout VCS metadata and every configured runtime-denied root are subtracted from otherwise
 readable canon. Canonical path, symlink target and directory inode aliases are checked before

@@ -42,6 +42,13 @@ The SDLC Agent System can be executed through multiple AI runtimes while keeping
   classification, access and result verifier for every active command template
 - `_contract/RUNTIME_ACCESS_V1.md` and `runtime-access-v1.tsv` — shared capability-enforced
   read/write matrix for every primary runtime
+- `_contract/SUBAGENTS.md`, `_contract/WORKER_HANDOFF_V1.md` and
+  `worker-task-kinds-v1.tsv` — bounded read-only worker policy and digest-bound file handoff
+- `_contract/MEMORY_V1.md`, `memory-role-access-v1.tsv`, `memory-command-access-v1.tsv` and
+  `MEMORY_USER_GUIDE.md` — optional Project memory schema, role/command ACL, supported providers
+  and user connection instructions
+- `_contract/MEMORY_MVP_AUDIT.md` — implementation audit, verification evidence, residual risks
+  and live external-provider release conditions
 - `_contract/CHANGE_SCOPE_V1.md` — Change Intent, L1/S3 isolated discovery, human-approved
   Stage 4 path ownership, scoped runtime writes and full-tree diff verification
 - root `CLAUDE.md` — global SDLC context and behavioral rules
@@ -99,10 +106,9 @@ Legacy Project inventory is additive and read-only through
 ## TDD and Subagents
 
 `_standards/tdd.md` defines Specify → Red → Green → Run → Repair → Refactor for every
-applicable change. `_contract/SUBAGENTS.md` preserves Supervisor + Worker as a future optional
-design, while the current executable contract accepts only `SDLC_SUBAGENTS=off`.
-`auto|cross-runtime` and direct worker execution return `BLOCKED` until a runtime/OS mechanism
-proves an exact bounded read scope. No current profile is advertised as a supported worker.
+applicable change. `_contract/SUBAGENTS.md` and `_contract/WORKER_HANDOFF_V1.md` define the
+optional bounded read-only Supervisor + Worker route. `_contract/MEMORY_V1.md` and
+`memory-role-access-v1.tsv` define the optional provider-neutral long-term memory boundary.
 
 ## Project Directory Modes
 

@@ -73,8 +73,9 @@ Every runtime must preserve:
   unspecified paths, VCS metadata and runtime-denied roots receive no capability
 - optional Supervisor + Worker design follows `_contract/SUBAGENTS.md`; the primary stage agent
   remains the sole writer and gate signer
-- current worker execution is fail-closed: only `SDLC_SUBAGENTS=off` is accepted;
-  `auto|cross-runtime` and direct worker dispatch return `BLOCKED` until runtime/OS
-  enforcement proves an exact bounded read scope
+- `auto|cross-runtime` workers require launcher-owned request/scope/route authorization and
+  runtime/OS-enforced exact bounded read-only access; direct or mismatched dispatch is `BLOCKED`
+- optional long-term memory follows `_contract/MEMORY_V1.md`: exact role ACL, immutable
+  launcher snapshot, proposal-only agent writes and user-approved broker read-back
 - launcher orchestration state follows `_contract/EXECUTION_JOURNAL.md`; it is
   isolated by project+run and never owned by a vendor session

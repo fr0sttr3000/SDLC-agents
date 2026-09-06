@@ -22,9 +22,11 @@ export LOCAL_AGENT_HOST="${LOCAL_AGENT_HOST:-}"
 export LOCAL_MODEL_PROVIDER="${LOCAL_MODEL_PROVIDER:-}"
 export LOCAL_MODEL="${LOCAL_MODEL:-}"
 export LOCAL_MODEL_ENDPOINT="${LOCAL_MODEL_ENDPOINT:-}"
+export LOCAL_MODEL_CREDENTIAL_REF="${LOCAL_MODEL_CREDENTIAL_REF:-}"
 export SDLC_SUBAGENTS="${SDLC_SUBAGENTS:-}"
 export SDLC_SUBAGENT_MAX="${SDLC_SUBAGENT_MAX:-}"
 export SDLC_SUBAGENT_PROFILE="${SDLC_SUBAGENT_PROFILE:-}"
+export SDLC_SUBAGENT_CREDENTIAL_REF="${SDLC_SUBAGENT_CREDENTIAL_REF:-}"
 export SDLC_SUBAGENT_TASKS="${SDLC_SUBAGENT_TASKS:-}"
 export SDLC_SUBAGENT_RUNNER="${SDLC_SUBAGENT_RUNNER:-$AGENTS/_runtimes/subagent-run.sh}"
 export SDLC_RUNTIME_ROUTING="${SDLC_RUNTIME_ROUTING:-}"
@@ -33,6 +35,9 @@ export SDLC_EXECUTION_PLAN_SHA256="${SDLC_EXECUTION_PLAN_SHA256:-}"
 export SDLC_CURRENT_ARTIFACT_MANIFEST_SHA256="${SDLC_CURRENT_ARTIFACT_MANIFEST_SHA256:-}"
 export SDLC_CHANGE_SCOPE_SHA256="${SDLC_CHANGE_SCOPE_SHA256:-}"
 AGENT_RUNNER="$AGENTS/_runtimes/agent-run.sh"
+MEMORY_BROKER="$AGENTS/_runtimes/memory/memoryctl.sh"
+MEMORY_ACL_FILE="$AGENTS/_contract/memory-role-access-v1.tsv"
+MEMORY_COMMAND_ACL_FILE="$AGENTS/_contract/memory-command-access-v1.tsv"
 COMMAND_CAPABILITIES_FILE="$AGENTS/_contract/command-capabilities-v1.tsv"
 CURRENT_ARTIFACT_GROUPS_FILE="$AGENTS/_contract/current-artifact-groups-v1.tsv"
 CYCLE1_STEPS_FILE="$AGENTS/_contract/cycle1-steps-v1.tsv"
@@ -45,6 +50,7 @@ LAUNCHER_ROUTING_POLICY=""
 LAUNCHER_SUBAGENTS=""
 LAUNCHER_SUBAGENT_MAX=""
 LAUNCHER_SUBAGENT_PROFILE=""
+LAUNCHER_SUBAGENT_CREDENTIAL_REF=""
 LAUNCHER_SUBAGENT_TASKS=""
 PROJECT="${PROJECT:-}"
 SDLC_UI_VIEW="${SDLC_UI_VIEW:-}"
@@ -74,6 +80,7 @@ SCOPE_PREP_SOURCE=""
 SCOPE_PREP_PROFILE_REVISION=""
 declare -a EXECUTION_STEP_PROFILES=()
 declare -a EXECUTION_STEP_SOURCES=()
+declare -a MEMORY_RUNTIME_ARGS=()
 declare -A JOURNAL_VALIDATED_FILE_SHA=()
 
 # ─── цвета ────────────────────────────────────────────────────────────────────
@@ -182,11 +189,7 @@ initialize_first_run_execution_policy() {
 
   case "${SDLC_SUBAGENTS:-}" in
     "") SDLC_SUBAGENTS="off" ;;
-    off) ;;
-    auto|cross-runtime)
-      echo -e "${R}BLOCKED: workers отключены до capability-enforced bounded read scope.${N}"
-      return 1
-      ;;
+    off|auto|cross-runtime) ;;
     *) echo -e "${R}SDLC_SUBAGENTS должен быть off, auto или cross-runtime${N}"; return 1 ;;
   esac
   [[ -n "${SDLC_SUBAGENT_MAX:-}" ]] || SDLC_SUBAGENT_MAX=2
@@ -204,7 +207,7 @@ initialize_first_run_execution_policy() {
 render_first_run_execution_policy() {
   echo -e "  Профиль исполнения: ${C}${SDLC_RUNTIME_ROUTING}${N}"
   echo -e "  Silent fallback: ${C}выключен${N}"
-  echo -e "  Subagents: ${C}off${N} — workers временно BLOCKED"
+  echo -e "  Workers: ${C}${SDLC_SUBAGENTS}${N}; bounded read-only handoff, fallback OFF"
   echo -e "  Изменить позже: ${W}Project Console → Configuration${N}"
   echo
 }
@@ -389,7 +392,7 @@ render_project_console() {
       '6 Cycle 2/3 — FROZEN / NOT READY; показать статус без запуска' \
       '7 Запустить только один Agent — Cycle 1 или общая утилита' \
       '9 Настроить AI — выбрать primary и проверить статус workers' \
-      'u Утилиты проекта — secret mappings, tracker, gates и validation' \
+      'u Утилиты проекта — memory, worker handoff, tracker, gates и validation' \
       'p Выбрать другой SDLC Project' \
       'l Локальные репозитории — clone, setup, build и local run' \
       'g Настройки launcher-а — каталоги, интерфейс и общие параметры' \
@@ -635,7 +638,7 @@ journal_ensure_root() {
 
 journal_create_run() {
   local type="$1" scope="$2" excluded="$3" dir entry idx=0 agent task plan_tmp
-  local stamp
+  local stamp memory_profile memory_profile_sha='none'
   if [[ "${USE_EXISTING_FROZEN_ROUTES:-0}" == 1 ]]; then
     [[ ${#EXECUTION_STEP_PROFILES[@]} -eq ${#RUN_CYCLE[@]} ]] || return 1
   else
@@ -644,6 +647,10 @@ journal_create_run() {
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   CURRENT_RUN_ID="$stamp-${BASHPID:-$$}-$RANDOM"
   dir="$(journal_run_dir "$PROJECT" "$CURRENT_RUN_ID")"
+  memory_profile="$(project_path)/tracking/memory/profile-v1.yaml"
+  if [[ -f "$memory_profile" && ! -L "$memory_profile" ]]; then
+    memory_profile_sha="$(sha256sum "$memory_profile" | awk '{print $1}')"
+  fi
   journal_ensure_root || return 1
   mkdir -p "$dir"
   plan_tmp="$(mktemp "$dir/plan.md.tmp.XXXXXX")" || return 1
@@ -653,10 +660,11 @@ journal_create_run() {
       "$CURRENT_RUN_ID" "$(journal_yaml_quote "$PROJECT")" "$(journal_yaml_quote "$(project_path)")" \
       "$type" "$(journal_yaml_quote "$scope")" "$(journal_yaml_quote "$excluded")"
     printf 'parent_run_id: %s\n' "${PARENT_RUN_ID:-none}"
-    printf 'runtime_routing: %s\nsubagents: %s\nsubagent_max: %s\nsubagent_profile: %s\nsubagent_tasks: %s\ncreated_at: %s\n' \
+    printf 'runtime_routing: %s\nsubagents: %s\nsubagent_max: %s\nsubagent_profile: %s\nsubagent_credential_ref: %s\nsubagent_tasks: %s\ncreated_at: %s\n' \
       "${SDLC_RUNTIME_ROUTING:-}" "${SDLC_SUBAGENTS:-}" "${SDLC_SUBAGENT_MAX:-}" \
-      "${SDLC_SUBAGENT_PROFILE:-none}" "${SDLC_SUBAGENT_TASKS:-none}" \
+      "${SDLC_SUBAGENT_PROFILE:-none}" "${SDLC_SUBAGENT_CREDENTIAL_REF:-none}" "${SDLC_SUBAGENT_TASKS:-none}" \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'memory_profile_sha256: %s\n' "$memory_profile_sha"
     printf 'supported_scope: cycle1\ntdd_cycle1: %s\ncycle23_status: FROZEN / NOT READY\n' \
       "$(read_cycle_tdd_status 1 2>/dev/null || printf 'UNKNOWN')"
     printf 'product_ci_profile_schema: %s\nproduct_ci_profile_revision: %s\n' \
@@ -1734,20 +1742,22 @@ load_runtime() {
   [[ -n "${LOCAL_MODEL_PROVIDER:-}" ]] || LOCAL_MODEL_PROVIDER="$(read_config_value LOCAL_MODEL_PROVIDER || true)"
   [[ -n "${LOCAL_MODEL:-}" ]] || LOCAL_MODEL="$(read_config_value LOCAL_MODEL || true)"
   [[ -n "${LOCAL_MODEL_ENDPOINT:-}" ]] || LOCAL_MODEL_ENDPOINT="$(read_config_value LOCAL_MODEL_ENDPOINT || true)"
+  [[ -n "${LOCAL_MODEL_CREDENTIAL_REF:-}" ]] || LOCAL_MODEL_CREDENTIAL_REF="$(read_config_value LOCAL_MODEL_CREDENTIAL_REF || true)"
   [[ -n "${SDLC_SUBAGENTS:-}" ]] || SDLC_SUBAGENTS="$(read_config_value SDLC_SUBAGENTS || true)"
   [[ -n "${SDLC_SUBAGENT_MAX:-}" ]] || SDLC_SUBAGENT_MAX="$(read_config_value SDLC_SUBAGENT_MAX || true)"
   [[ -n "${SDLC_SUBAGENT_PROFILE:-}" ]] || SDLC_SUBAGENT_PROFILE="$(read_config_value SDLC_SUBAGENT_PROFILE || true)"
+  [[ -n "${SDLC_SUBAGENT_CREDENTIAL_REF:-}" ]] || SDLC_SUBAGENT_CREDENTIAL_REF="$(read_config_value SDLC_SUBAGENT_CREDENTIAL_REF || true)"
   [[ -n "${SDLC_SUBAGENT_TASKS:-}" ]] || SDLC_SUBAGENT_TASKS="$(read_config_value SDLC_SUBAGENT_TASKS || true)"
   [[ -n "${SDLC_RUNTIME_ROUTING:-}" ]] || SDLC_RUNTIME_ROUTING="$(read_config_value SDLC_RUNTIME_ROUTING || true)"
-  export LOCAL_AGENT_HOST LOCAL_MODEL_PROVIDER LOCAL_MODEL LOCAL_MODEL_ENDPOINT
-  export SDLC_SUBAGENTS SDLC_SUBAGENT_MAX SDLC_SUBAGENT_PROFILE SDLC_SUBAGENT_TASKS SDLC_RUNTIME_ROUTING
+  export LOCAL_AGENT_HOST LOCAL_MODEL_PROVIDER LOCAL_MODEL LOCAL_MODEL_ENDPOINT LOCAL_MODEL_CREDENTIAL_REF
+  export SDLC_SUBAGENTS SDLC_SUBAGENT_MAX SDLC_SUBAGENT_PROFILE SDLC_SUBAGENT_CREDENTIAL_REF SDLC_SUBAGENT_TASKS SDLC_RUNTIME_ROUTING
 }
 
 configure_local_profile() {
-  local persist="${1:-yes}" host provider model endpoint
+  local persist="${1:-yes}" host provider model endpoint credential_ref=''
   echo
   echo -e "${W}Local agent host${N} — зарегистрированный адаптер из _runtimes/local-hosts/"
-  echo -e "  Встроенный: ${C}codex-oss${N} (Ollama или LM Studio)"
+  echo -e "  Встроенные: ${C}codex-oss${N} (Ollama/LM Studio), ${C}openai-api${N} (read-only advisory Responses API)"
   read -rp "Agent host id: " host
   [[ "$host" =~ ^[A-Za-z0-9._-]+$ ]] || { echo -e "${R}Некорректный host id${N}"; return 1; }
 
@@ -1758,6 +1768,12 @@ configure_local_profile() {
       return 1
     }
     endpoint=""
+  elif [[ "$host" == openai-api ]]; then
+    provider=openai
+    read -rp 'Endpoint [https://api.openai.com/v1]: ' endpoint
+    [[ -n "$endpoint" ]] || endpoint='https://api.openai.com/v1'
+    read -rp 'Credential ref (pass:entry): ' credential_ref
+    [[ "$credential_ref" == pass:* ]] || { echo -e "${R}openai-api требует pass:entry${N}"; return 1; }
   else
     read -rp "Provider id (например openai-compatible/vllm/llama.cpp): " provider
     read -rp "Endpoint URL (без токена): " endpoint
@@ -1776,12 +1792,14 @@ configure_local_profile() {
   LOCAL_MODEL_PROVIDER="$provider"
   LOCAL_MODEL="$model"
   LOCAL_MODEL_ENDPOINT="$endpoint"
-  export LOCAL_AGENT_HOST LOCAL_MODEL_PROVIDER LOCAL_MODEL LOCAL_MODEL_ENDPOINT
+  LOCAL_MODEL_CREDENTIAL_REF="$credential_ref"
+  export LOCAL_AGENT_HOST LOCAL_MODEL_PROVIDER LOCAL_MODEL LOCAL_MODEL_ENDPOINT LOCAL_MODEL_CREDENTIAL_REF
   if [[ "$persist" == "yes" ]]; then
     write_config_value LOCAL_AGENT_HOST "$LOCAL_AGENT_HOST"
     write_config_value LOCAL_MODEL_PROVIDER "$LOCAL_MODEL_PROVIDER"
     write_config_value LOCAL_MODEL "$LOCAL_MODEL"
     write_config_value LOCAL_MODEL_ENDPOINT "$LOCAL_MODEL_ENDPOINT"
+    write_config_value LOCAL_MODEL_CREDENTIAL_REF "$LOCAL_MODEL_CREDENTIAL_REF"
   fi
 }
 
@@ -2053,8 +2071,9 @@ apply_profile() {
     LOCAL_MODEL=""
     LOCAL_AGENT_HOST=""
     LOCAL_MODEL_ENDPOINT=""
+    LOCAL_MODEL_CREDENTIAL_REF=""
   fi
-  export AGENT_RUNTIME LOCAL_MODEL_PROVIDER LOCAL_MODEL LOCAL_AGENT_HOST LOCAL_MODEL_ENDPOINT
+  export AGENT_RUNTIME LOCAL_MODEL_PROVIDER LOCAL_MODEL LOCAL_AGENT_HOST LOCAL_MODEL_ENDPOINT LOCAL_MODEL_CREDENTIAL_REF
   ensure_runtime_available
 }
 
@@ -2119,17 +2138,34 @@ ensure_routing_policy() {
 }
 
 configure_subagent_settings() {
-  local context="${1:-standalone}"
+  local context="${1:-standalone}" choice max
   echo
   render_subagent_mode_choice "$context"
-  SDLC_SUBAGENTS="off"
+  if [[ "$context" == first-run ]]; then
+    choice=1
+  else
+    read -rp 'Worker policy [1-3]: ' choice
+  fi
+  case "$choice" in
+    1) SDLC_SUBAGENTS=off; SDLC_SUBAGENT_PROFILE=''; SDLC_SUBAGENT_CREDENTIAL_REF=''; SDLC_SUBAGENT_TASKS='' ;;
+    2) SDLC_SUBAGENTS=auto; SDLC_SUBAGENT_PROFILE=''; SDLC_SUBAGENT_CREDENTIAL_REF=''; SDLC_SUBAGENT_TASKS='analysis,research,review,test-interpretation' ;;
+    3)
+      SDLC_SUBAGENTS=cross-runtime
+      configure_cross_runtime_subagents || return 1
+      ;;
+    *) echo -e "${R}Неверный выбор${N}"; return 1 ;;
+  esac
   SDLC_SUBAGENT_MAX=2
-  SDLC_SUBAGENT_PROFILE=""
-  SDLC_SUBAGENT_TASKS=""
-  export SDLC_SUBAGENTS SDLC_SUBAGENT_MAX SDLC_SUBAGENT_PROFILE SDLC_SUBAGENT_TASKS
+  if [[ "$SDLC_SUBAGENTS" != off ]]; then
+    read -rp 'Максимум workers на primary run [2]: ' max
+    [[ -z "$max" ]] || SDLC_SUBAGENT_MAX="$max"
+  fi
+  ensure_subagent_settings || return 1
+  export SDLC_SUBAGENTS SDLC_SUBAGENT_MAX SDLC_SUBAGENT_PROFILE SDLC_SUBAGENT_CREDENTIAL_REF SDLC_SUBAGENT_TASKS
   write_config_value SDLC_SUBAGENTS "$SDLC_SUBAGENTS"
   write_config_value SDLC_SUBAGENT_MAX "$SDLC_SUBAGENT_MAX"
   write_config_value SDLC_SUBAGENT_PROFILE "$SDLC_SUBAGENT_PROFILE"
+  write_config_value SDLC_SUBAGENT_CREDENTIAL_REF "$SDLC_SUBAGENT_CREDENTIAL_REF"
   write_config_value SDLC_SUBAGENT_TASKS "$SDLC_SUBAGENT_TASKS"
 }
 
@@ -2142,11 +2178,12 @@ render_subagent_mode_choice() {
   fi
   echo -e "${W}Worker execution policy${N}"
   echo
-  echo "Workers временно недоступны: текущие adapters не доказывают ограничение чтения"
-  echo "точным project scope на уровне runtime/OS. Prompt-only ограничение недостаточно."
-  echo "Launcher продолжит с единственным изолированным primary; workers fail-closed."
+  echo "Worker — отдельный read-only task process с точным digest-bound read manifest."
+  echo "Обмен идёт только через launcher-owned Worker Request/Result files; fallback выключен."
   echo
-  echo -e "  ${Y}off${N} Работать без помощников (единственный доступный режим)"
+  echo -e "  ${Y}1)${N} off — без workers (по умолчанию)"
+  echo -e "  ${Y}2)${N} auto — тот же точный route, если adapter поддерживает bounded read-only"
+  echo -e "  ${Y}3)${N} cross-runtime — отдельный явный worker runtime/provider/model"
 }
 
 render_first_run_ai_routing_choice() {
@@ -2170,7 +2207,7 @@ render_first_run_ai_routing_choice() {
     '  4) Спрашивать при подготовке каждого запуска' \
     '     Launcher соберёт назначения для всех нужных шагов до Preview. Это даёт больше контроля, но требует больше ответов.' \
     '' \
-    'Следующий шаг: launcher подтвердит, что workers временно отключены fail-closed.'
+    'Следующий шаг: launcher оставит workers выключенными по умолчанию; их можно включить позже в настройках.'
 }
 
 configure_first_run_ai_mode() {
@@ -2195,11 +2232,24 @@ ensure_subagent_settings() {
     off|"")
       SDLC_SUBAGENTS=off
       SDLC_SUBAGENT_PROFILE=''
+      SDLC_SUBAGENT_CREDENTIAL_REF=''
       SDLC_SUBAGENT_TASKS=''
       ;;
-    auto|cross-runtime)
-      echo -e "${R}BLOCKED: worker execution отключён до capability-enforced bounded read scope.${N}"
-      return 1
+    auto)
+      SDLC_SUBAGENT_PROFILE=''
+      SDLC_SUBAGENT_CREDENTIAL_REF=''
+      ;;
+    cross-runtime)
+      validate_subagent_profile "${SDLC_SUBAGENT_PROFILE:-}" || return 1
+      case "$SDLC_SUBAGENT_PROFILE" in
+        local\|*\|openai-api\|*)
+          [[ "${SDLC_SUBAGENT_CREDENTIAL_REF:-}" == pass:* &&
+             "$SDLC_SUBAGENT_CREDENTIAL_REF" != *$'\n'* &&
+             "$SDLC_SUBAGENT_CREDENTIAL_REF" != *$'\r'* &&
+             "$SDLC_SUBAGENT_CREDENTIAL_REF" != *'"'* ]] || return 1
+          ;;
+        *) [[ -z "${SDLC_SUBAGENT_CREDENTIAL_REF:-}" ]] || return 1 ;;
+      esac
       ;;
     *) echo -e "${R}SDLC_SUBAGENTS должен быть off, auto или cross-runtime${N}"; return 1 ;;
   esac
@@ -2244,7 +2294,7 @@ validate_subagent_profile() {
       ;;
     local)
       [[ -n "$provider" && -n "$model" && -n "$host" ]] || return 1
-      [[ "$host" == codex-oss ]] || return 1
+      [[ "$host" == codex-oss || "$host" == openai-api ]] || return 1
       ;;
     *) return 1 ;;
   esac
@@ -2266,14 +2316,36 @@ subagent_profile_label() {
 
 render_subagent_execution_summary() {
   printf '  Primary: %s\n' "$(preview_route_label 2>/dev/null || printf 'BLOCKED: incomplete primary')"
-  printf '%s\n' \
-    '  Workers: BLOCKED until capability-enforced bounded read scope exists' \
-    '  Fallback: OFF'
+  printf '  Workers: %s (max=%s)\n' "${SDLC_SUBAGENTS:-off}" "${SDLC_SUBAGENT_MAX:-2}"
+  [[ "${SDLC_SUBAGENTS:-off}" != cross-runtime ]] ||
+    printf '  Worker route: %s; tasks=%s\n' "$(subagent_profile_label 2>/dev/null || printf 'BLOCKED: incomplete')" "${SDLC_SUBAGENT_TASKS:-missing}"
+  printf '%s\n' '  Handoff: digest-bound files only; Project/memory writes and nested delegation denied' '  Fallback: OFF'
 }
 
 configure_cross_runtime_subagents() {
-  echo -e "${R}BLOCKED: cross-runtime workers отключены до capability-enforced bounded read scope.${N}"
-  return 1
+  local saved_profile saved_credential_ref raw normalized
+  saved_profile="$(current_profile)"
+  saved_credential_ref="${LOCAL_MODEL_CREDENTIAL_REF:-}"
+  echo -e "${W}Выбери точный worker runtime/profile.${N} Gemini worker пока недоступен: его CLI adapter не доказывает read-only capability."
+  select_step_profile || { LOCAL_MODEL_CREDENTIAL_REF="$saved_credential_ref"; export LOCAL_MODEL_CREDENTIAL_REF; apply_profile "$saved_profile" >/dev/null 2>&1 || true; return 1; }
+  case "$AGENT_RUNTIME:${LOCAL_AGENT_HOST:-}" in
+    claude:|codex:|local:codex-oss|local:openai-api) ;;
+    *) echo -e "${R}Выбранный worker profile не поддерживает bounded read-only.${N}"; LOCAL_MODEL_CREDENTIAL_REF="$saved_credential_ref"; export LOCAL_MODEL_CREDENTIAL_REF; apply_profile "$saved_profile"; return 1 ;;
+  esac
+  SDLC_SUBAGENT_PROFILE="$(current_profile)"
+  SDLC_SUBAGENT_CREDENTIAL_REF="${LOCAL_MODEL_CREDENTIAL_REF:-}"
+  read -rp 'Разрешённые advisory kinds (analysis,research,review,test-interpretation): ' raw
+  normalized="$(normalize_subagent_tasks "$raw")" || {
+    echo -e "${R}Некорректный список worker kinds${N}"
+    LOCAL_MODEL_CREDENTIAL_REF="$saved_credential_ref"
+    export LOCAL_MODEL_CREDENTIAL_REF
+    apply_profile "$saved_profile"
+    return 1
+  }
+  SDLC_SUBAGENT_TASKS="$normalized"
+  LOCAL_MODEL_CREDENTIAL_REF="$saved_credential_ref"
+  export LOCAL_MODEL_CREDENTIAL_REF SDLC_SUBAGENT_PROFILE SDLC_SUBAGENT_CREDENTIAL_REF SDLC_SUBAGENT_TASKS
+  apply_profile "$saved_profile"
 }
 
 write_routing_entry() {
@@ -2370,26 +2442,32 @@ save_project_ai_config() {
   local profile="$1" policy="$2" path dir tmp tasks
   case "$policy" in single|per-stage|per-agent|ask) ;; *) return 1 ;; esac
   [[ "$profile" != *$'\n'* && "$profile" != *$'\r'* && "$profile" != *'"'* ]] || return 1
-  [[ "${SDLC_SUBAGENTS:-off}" == off ]] || return 1
+  ensure_subagent_settings || return 1
+  if [[ "${SDLC_SUBAGENTS:-off}" == cross-runtime ]]; then
+    validate_subagent_profile "${SDLC_SUBAGENT_PROFILE:-}" || return 1
+    tasks="$(normalize_subagent_tasks "${SDLC_SUBAGENT_TASKS:-}")" || return 1
+    SDLC_SUBAGENT_TASKS="$tasks"
+  fi
   path="$(project_ai_config_path)"
   dir="$(dirname "$path")"
   mkdir -p "$dir"
   tmp="$(mktemp "$path.tmp.XXXXXX")" || return 1
-  printf 'BASE_PROFILE="%s"\nSDLC_RUNTIME_ROUTING="%s"\nSDLC_SUBAGENTS="%s"\nSDLC_SUBAGENT_MAX="%s"\nSDLC_SUBAGENT_PROFILE="%s"\nSDLC_SUBAGENT_TASKS="%s"\n' \
+  printf 'BASE_PROFILE="%s"\nSDLC_RUNTIME_ROUTING="%s"\nSDLC_SUBAGENTS="%s"\nSDLC_SUBAGENT_MAX="%s"\nSDLC_SUBAGENT_PROFILE="%s"\nSDLC_SUBAGENT_CREDENTIAL_REF="%s"\nSDLC_SUBAGENT_TASKS="%s"\n' \
     "$profile" "$policy" "${SDLC_SUBAGENTS:-off}" "${SDLC_SUBAGENT_MAX:-2}" \
-    "${SDLC_SUBAGENT_PROFILE:-}" "${SDLC_SUBAGENT_TASKS:-}" > "$tmp"
+    "${SDLC_SUBAGENT_PROFILE:-}" "${SDLC_SUBAGENT_CREDENTIAL_REF:-}" "${SDLC_SUBAGENT_TASKS:-}" > "$tmp"
   chmod 600 "$tmp"
   mv "$tmp" "$path"
 }
 
 activate_project_ai_config() {
-  local path profile policy subagents subagent_max subagent_profile subagent_tasks value
+  local path profile policy subagents subagent_max subagent_profile subagent_credential_ref subagent_tasks value
   ROUTING_FILE="$(project_path)/tracking/runtime-routing"
   profile="${LAUNCHER_BASE_PROFILE:-$BASE_PROFILE}"
   policy="${LAUNCHER_ROUTING_POLICY:-${SDLC_RUNTIME_ROUTING:-single}}"
   subagents="${LAUNCHER_SUBAGENTS:-${SDLC_SUBAGENTS:-off}}"
   subagent_max="${LAUNCHER_SUBAGENT_MAX:-${SDLC_SUBAGENT_MAX:-2}}"
   subagent_profile="${LAUNCHER_SUBAGENT_PROFILE:-${SDLC_SUBAGENT_PROFILE:-}}"
+  subagent_credential_ref="${LAUNCHER_SUBAGENT_CREDENTIAL_REF:-${SDLC_SUBAGENT_CREDENTIAL_REF:-}}"
   subagent_tasks="${LAUNCHER_SUBAGENT_TASKS:-${SDLC_SUBAGENT_TASKS:-}}"
   path="$(project_ai_config_path)"
   if [[ -f "$path" ]]; then
@@ -2402,6 +2480,9 @@ activate_project_ai_config() {
     if grep -q '^SDLC_SUBAGENT_PROFILE=' "$path"; then
       subagent_profile="$(awk -F= '$1 == "SDLC_SUBAGENT_PROFILE" { sub(/^[^=]*="/, ""); sub(/"$/, ""); print; exit }' "$path")"
     fi
+    if grep -q '^SDLC_SUBAGENT_CREDENTIAL_REF=' "$path"; then
+      subagent_credential_ref="$(awk -F= '$1 == "SDLC_SUBAGENT_CREDENTIAL_REF" { sub(/^[^=]*="/, ""); sub(/"$/, ""); print; exit }' "$path")"
+    fi
     if grep -q '^SDLC_SUBAGENT_TASKS=' "$path"; then
       subagent_tasks="$(awk -F= '$1 == "SDLC_SUBAGENT_TASKS" { sub(/^[^=]*="/, ""); sub(/"$/, ""); print; exit }' "$path")"
     fi
@@ -2413,9 +2494,10 @@ activate_project_ai_config() {
   SDLC_SUBAGENTS="$subagents"
   SDLC_SUBAGENT_MAX="$subagent_max"
   SDLC_SUBAGENT_PROFILE="$subagent_profile"
+  SDLC_SUBAGENT_CREDENTIAL_REF="$subagent_credential_ref"
   SDLC_SUBAGENT_TASKS="$subagent_tasks"
   ensure_subagent_settings || return 1
-  export SDLC_RUNTIME_ROUTING SDLC_SUBAGENTS SDLC_SUBAGENT_MAX SDLC_SUBAGENT_PROFILE SDLC_SUBAGENT_TASKS
+  export SDLC_RUNTIME_ROUTING SDLC_SUBAGENTS SDLC_SUBAGENT_MAX SDLC_SUBAGENT_PROFILE SDLC_SUBAGENT_CREDENTIAL_REF SDLC_SUBAGENT_TASKS
   apply_profile "$BASE_PROFILE"
 }
 
@@ -2457,6 +2539,7 @@ declare -A AGENT_DESC=(
   [l3-build]="Local Builder — собрать проект"
   [l4-run]="Local Runner — запустить и проверить проект"
   [s0-kickoff]="Project Kickoff — интервью для нового проекта / обновление беклога"
+  [s0-defects]="Known Defects Memory — read/proposal handoff известных ошибок"
   [s0-secrets]="Secrets Manager — pass: добавить, ротировать, env"
   [s0-validate]="Structure Validator — проверить и починить структуру проекта"
   [s0-tracker]="Sprint & Task Tracker — спринты, задачи, план vs факт"
@@ -2626,7 +2709,7 @@ header() {
     echo -e "  Local:   ${C}${LOCAL_AGENT_HOST:-?} / ${LOCAL_MODEL_PROVIDER:-?} / ${LOCAL_MODEL:-?}${N}"
   fi
   echo -e "  Routing: ${C}${SDLC_RUNTIME_ROUTING:-не выбран}${N}"
-  echo -e "  Workers: ${C}off — BLOCKED до bounded read enforcement${N}"
+  echo -e "  Workers: ${C}${SDLC_SUBAGENTS:-off}/${SDLC_SUBAGENT_MAX:-2}${N} — exact read/route handoff"
   if [[ "${SDLC_SUBAGENTS:-}" == "cross-runtime" ]]; then
     echo -e "  Worker:  ${C}$(subagent_profile_label 2>/dev/null || printf 'не настроен')${N}"
     echo -e "  Verify:  ${C}supervisor; fallback OFF${N}"
@@ -2785,6 +2868,63 @@ find_agent_dir() {
   echo ""
 }
 
+memory_collections_for_agent() {
+  local agent="$1" command="$2" project_dir="$3" enabled configured collection joined=''
+  local -a allowed=()
+  [[ -x "$MEMORY_BROKER" && -f "$MEMORY_ACL_FILE" && -f "$MEMORY_COMMAND_ACL_FILE" ]] || return 0
+  [[ -f "$project_dir/tracking/memory/profile-v1.yaml" ]] || return 0
+  enabled="$(awk -F': ' '$1 == "enabled" {print $2; exit}' "$project_dir/tracking/memory/profile-v1.yaml")"
+  [[ "$enabled" == true ]] || return 0
+  configured="$(awk -F': ' '$1 == "collections" {print $2; exit}' "$project_dir/tracking/memory/profile-v1.yaml")"
+  mapfile -t allowed < <(awk -F'\t' -v agent="$agent" 'NR > 1 && $2 == agent && $4 == "allow" {print $3}' "$MEMORY_ACL_FILE")
+  for collection in planning defects architecture; do
+    [[ ",$configured," == *",$collection,"* ]] || continue
+    printf '%s\n' "${allowed[@]}" | grep -Fxq "$collection" || continue
+    [[ "$(awk -F'\t' -v a="$agent" -v m="$command" -v c="$collection" 'NR > 1 && $2 == a && $3 == m && $4 == c && $5 == "allow" {print "allow"; exit}' "$MEMORY_COMMAND_ACL_FILE")" == allow ]] || continue
+    joined="${joined}${joined:+,}$collection"
+  done
+  printf '%s\n' "$joined"
+}
+
+prepare_memory_snapshot() {
+  local agent="$1" task="$2" project_dir="$3" collections run_dir output digest approval_id expected_profile_sha current_profile_sha memory_command
+  MEMORY_RUNTIME_ARGS=()
+  [[ -n "${CURRENT_RUN_ID:-}" ]] || {
+    [[ ! -f "$project_dir/tracking/memory/profile-v1.yaml" ]] && return 0
+    echo -e "${R}MEMORY BLOCKED: launcher-owned execution run is required.${N}"; return 1
+  }
+  run_dir="$(journal_run_dir "$PROJECT" "$CURRENT_RUN_ID")"
+  [[ -d "$run_dir" && ! -L "$run_dir" ]] || return 1
+  expected_profile_sha="$(awk -F': ' '$1 == "memory_profile_sha256" {print $2; exit}' "$run_dir/plan.md")"
+  if [[ -f "$project_dir/tracking/memory/profile-v1.yaml" && ! -L "$project_dir/tracking/memory/profile-v1.yaml" ]]; then
+    current_profile_sha="$(sha256sum "$project_dir/tracking/memory/profile-v1.yaml" | awk '{print $1}')"
+  else
+    current_profile_sha=none
+  fi
+  [[ "$expected_profile_sha" == "$current_profile_sha" ]] || {
+    echo -e "${R}MEMORY BLOCKED: Project memory profile changed after execution Preview.${N}"
+    return 1
+  }
+  [[ "$current_profile_sha" != none ]] || return 0
+  memory_command="${task%%$'\n'*}"
+  memory_command="${memory_command%% *}"
+  collections="$(memory_collections_for_agent "$agent" "$memory_command" "$project_dir")"
+  [[ -n "$collections" ]] || return 0
+  mkdir -p "$run_dir/memory"
+  output="$run_dir/memory/step-${EXECUTION_LAST_STEP:-0}-${agent}-snapshot.md"
+  approval_id="APPROVAL-MEMORY-READ-${CURRENT_RUN_ID}-${EXECUTION_LAST_STEP:-0}"
+  SDLC_EXECUTION_RUN_DIR="$run_dir" "$MEMORY_BROKER" snapshot \
+    --project "$project_dir" --agent "$agent" --command "$memory_command" \
+    --collections "$collections" --output "$output" --approval-id "$approval_id" || return 1
+  digest="$(sha256sum "$output" | awk '{print $1}')"
+  MEMORY_RUNTIME_ARGS=(--memory-snapshot "$output" --memory-snapshot-sha256 "$digest")
+  export SDLC_EXECUTION_RUN_DIR="$run_dir"
+  [[ -z "${CURRENT_RUN_ID:-}" ]] ||
+    journal_append_event "$CURRENT_RUN_ID" memory_snapshot_ready RUNNING \
+      "${EXECUTION_LAST_STEP:-0}" PENDING "$agent" "$task" \
+      "collections=$collections snapshot_sha256=$digest"
+}
+
 run_agent() {
   local agent="$1"
   local project="$2"
@@ -2792,6 +2932,8 @@ run_agent() {
   local access="${ACTIVE_AGENT_ACCESS:-write}"
   local agent_dir project_dir="$PROJECTS/$project"
   local -a runtime_scope_args=()
+  local -a worker_request_args=()
+  local worker_request_file=''
   case "$agent" in
     s4-devops|s6-release|s6-sre)
       cycle23_frozen_notice
@@ -2825,6 +2967,15 @@ run_agent() {
     apply_profile "$ACTIVE_EXECUTION_PROFILE" || return 1
   else
     resolve_step_runtime "$agent" || return 1
+  fi
+
+  if [[ "${SDLC_SUBAGENTS:-off}" != off && -n "${CURRENT_RUN_ID:-}" ]]; then
+    local worker_dir
+    worker_dir="$(journal_run_dir "$PROJECT" "$CURRENT_RUN_ID")/workers"
+    mkdir -p "$worker_dir"
+    worker_request_file="$worker_dir/request-step-${EXECUTION_LAST_STEP:-0}.yaml"
+    worker_request_args=(--worker-request-out "$worker_request_file")
+    export SDLC_EXECUTION_RUN_DIR="$(journal_run_dir "$PROJECT" "$CURRENT_RUN_ID")"
   fi
 
   # Собираем vendor-neutral prompt для выбранного runtime.
@@ -2906,8 +3057,10 @@ run_agent() {
       [[ -n "$prompt" ]] && echo -e "${Y}Задача этого шага:${N} $prompt"
       echo -e "${Y}Для выхода используй команду выхода выбранного runtime.${N}"
       echo
+      prepare_memory_snapshot "$agent" "$task" "$project_dir" || return 1
       "$AGENT_RUNNER" --runtime "$AGENT_RUNTIME" --agent-dir "$agent_dir" \
-        --project-dir "$project_dir" --mode interactive --prompt "${prompt:-начни сессию}"
+        --project-dir "$project_dir" --mode interactive "${MEMORY_RUNTIME_ARGS[@]}" \
+        "${worker_request_args[@]}" --prompt "${prompt:-начни сессию}"
       local rc=$?
       echo
       if [[ $rc -eq 0 ]]; then
@@ -2920,12 +3073,14 @@ run_agent() {
     *)
       echo
       local rc=0
+      prepare_memory_snapshot "$agent" "$task" "$project_dir" || return 1
       if [[ -n "$prompt" ]]; then
         echo -e "${C}Запускаю ($(runtime_label)): ${W}$prompt${N}"
         echo
         "$AGENT_RUNNER" --runtime "$AGENT_RUNTIME" --agent-dir "$agent_dir" \
           --project-dir "$project_dir" --mode task --access "$access" \
-          "${runtime_scope_args[@]}" --prompt "$prompt" || rc=$?
+          "${runtime_scope_args[@]}" "${MEMORY_RUNTIME_ARGS[@]}" \
+          "${worker_request_args[@]}" --prompt "$prompt" || rc=$?
       else
         if ! runtime_supports_interactive; then
           report_interactive_codex_block
@@ -2934,11 +3089,19 @@ run_agent() {
         echo -e "${C}Открываю интерактивный режим выбранного runtime...${N}"
         echo
         "$AGENT_RUNNER" --runtime "$AGENT_RUNTIME" --agent-dir "$agent_dir" \
-          --project-dir "$project_dir" --mode interactive --prompt "начни сессию" || rc=$?
+          --project-dir "$project_dir" --mode interactive "${MEMORY_RUNTIME_ARGS[@]}" \
+          "${worker_request_args[@]}" --prompt "начни сессию" || rc=$?
       fi
       echo
       if [[ $rc -eq 0 ]]; then
         echo -e "${G}✓ Агент завершил работу${N}"
+        if [[ -n "$worker_request_file" && -f "$worker_request_file" ]]; then
+          echo -e "${Y}Worker Request готов, но ещё не авторизован: ${C}$worker_request_file${N}"
+          echo -e "Launcher/user должен отдельно зафиксировать exact read manifest и route; прямой обмен запрещён."
+          journal_append_event "$CURRENT_RUN_ID" worker_request_ready WAITING_USER \
+            "${EXECUTION_LAST_STEP:-0}" PENDING "$agent" "$task" \
+            "request_sha256=$(sha256sum "$worker_request_file" | awk '{print $1}')"
+        fi
       else
         echo -e "${R}✗ Runtime завершился с кодом $rc${N}"
       fi
@@ -2963,7 +3126,7 @@ menu_single_agent() {
     "Tools — общие утилиты (все циклы)"
   )
   local -a groups=(
-    "s0-kickoff s0-tracker s0-validate s0-quality-gates"
+    "s0-kickoff s0-defects s0-tracker s0-validate s0-quality-gates"
     "s1-pm s1-pmo s1-finance"
     "s2-ba s2-po s2-qa-req s2-test-strategy s2-security"
     "s3-arch s3-security s3-rbac s3-dba"
@@ -5370,7 +5533,7 @@ menu_ai_assignment() {
   header
   echo -e "${W}── Primary routing и worker status ────────────────${N}"
   echo "Здесь можно изменить AI-настройку выбранного проекта. Она определяет"
-  echo "исполнителя каждого основного этапа; workers пока отключены fail-closed,"
+  echo "исполнителя каждого основного этапа; workers остаются опциональными и bounded read-only,"
   echo "но не меняет порядок SDLC и сама ничего не запускает."
   echo "Перед реальным запуском итоговые назначения будут показаны в Preview."
   echo "Для Local обязательны host, provider и точный model id; fallback выключен."
@@ -5380,8 +5543,8 @@ menu_ai_assignment() {
   echo -e "  ${Y}2)${N} Своя AI-модель для каждого Agent Cycle 1"
   echo -e "  ${Y}3)${N} Исключения для отдельных ролей"
   echo -e "  ${Y}4)${N} Спрашивать при подготовке каждого запуска"
-  echo -e "${W}Workers:${N} BLOCKED до capability-enforced bounded read scope"
-  echo -e "  ${Y}5)${N} Показать причину BLOCKED"
+  echo -e "${W}Workers:${N} ${SDLC_SUBAGENTS:-off}/${SDLC_SUBAGENT_MAX:-2}; exact handoff, fallback OFF"
+  echo -e "  ${Y}5)${N} Настроить worker policy/profile"
   echo -e "  ${Y}6)${N} Показать текущие primary назначения и worker status"
   echo -e "  ${Y}b)${N} Назад"
   read -rp "$(echo -e "${W}Выбери:${N} ")" choice
@@ -5487,6 +5650,185 @@ menu_tracker() {
   esac
 }
 
+menu_memory() {
+  local choice project_dir provider endpoint credential namespace read_approval collections retention
+  local proposal agent command approval
+  project_dir="$(project_path)"
+  header
+  echo -e "${W}── Подключаемая память выбранного проекта ───────────${N}"
+  printf '%s\n' \
+    '  1) Status / profile validation' \
+    '  2) Configure provider (explicit persistent Project grant)' \
+    '  3) Provider doctor' \
+    '  4) Validate proposal (no write)' \
+    '  5) Apply proposal (Preview + Human Approval + read-back)' \
+    '  6) Disable memory profile (provider data is retained)' \
+    '  b) Назад'
+  read -rp 'Выбери [1-6/b]: ' choice
+  case "$choice" in
+    1) "$MEMORY_BROKER" status --project "$project_dir" ;;
+    2)
+      read -rp 'Provider [files-v1|qdrant-v1|mem0-oss-v1|mem0-platform-v1]: ' provider
+      read -rp 'Endpoint (existing directory or URL): ' endpoint
+      read -rp 'Credential ref [none|pass:entry]: ' credential
+      read -rp 'Project namespace: ' namespace
+      read -rp 'Read approval [always|profile]: ' read_approval
+      read -rp 'Collections [planning,defects,architecture]: ' collections
+      read -rp 'Retention days [3650]: ' retention
+      [[ -n "$credential" ]] || credential=none
+      [[ -n "$read_approval" ]] || read_approval=always
+      [[ -n "$retention" ]] || retention=3650
+      echo -e "${Y}Эта команда создаст/заменит только tracking/memory/profile-v1.yaml.${N}"
+      read -rp 'Type ENABLE MEMORY: ' approval
+      [[ "$approval" == 'ENABLE MEMORY' ]] || { echo -e "${R}Отменено${N}"; return 1; }
+      "$MEMORY_BROKER" configure --project "$project_dir" --provider "$provider" \
+        --endpoint "$endpoint" --credential-ref "$credential" --namespace "$namespace" \
+        --read-approval "$read_approval" --collections "$collections" --retention-days "$retention"
+      ;;
+    3) "$MEMORY_BROKER" doctor --project "$project_dir" ;;
+    4|5)
+      read -rp 'Agent id: ' agent
+      read -rp 'Command id: ' command
+      read -rp 'Proposal TSV path: ' proposal
+      if [[ "$choice" == 4 ]]; then
+        "$MEMORY_BROKER" proposal-check --project "$project_dir" --agent "$agent" \
+          --command "$command" --proposal "$proposal"
+      else
+        read -rp 'Approval id (APPROVAL-MEMORY-*): ' approval
+        "$MEMORY_BROKER" apply --project "$project_dir" --agent "$agent" \
+          --command "$command" --proposal "$proposal" --approval-id "$approval"
+      fi
+      ;;
+    6)
+      read -rp 'Type DISABLE MEMORY: ' approval
+      [[ "$approval" == 'DISABLE MEMORY' ]] || { echo -e "${R}Отменено${N}"; return 1; }
+      "$MEMORY_BROKER" disable --project "$project_dir"
+      ;;
+    b|B|'') return ;;
+    *) return 1 ;;
+  esac
+  read -rp 'Нажми Enter...' _
+}
+
+worker_scope_safe_relative() {
+  local value="${1:-}" part
+  local -a parts=()
+  [[ -n "$value" && "$value" != /* && "$value" != *$'\t'* && "$value" != *$'\n'* && "$value" != *$'\r'* && "$value" != *'//' ]] || return 1
+  IFS='/' read -r -a parts <<<"$value"
+  for part in "${parts[@]}"; do [[ -n "$part" && "$part" != . && "$part" != .. ]] || return 1; done
+}
+
+menu_worker_request() {
+  local root request='' candidate run_dir workers_dir step request_id worker_agent kind task_b64 raw confirm
+  local saved_profile saved_credential_ref route_profile route_material route_sha request_sha scope_sha auth_sha result scope authorization
+  local ref canonical decoded plan_sha frozen_policy frozen_profile frozen_credential_ref frozen_tasks frozen_max completed_count
+  local -a refs=()
+  [[ "${SDLC_SUBAGENTS:-off}" != off ]] || {
+    echo -e "${Y}Workers выключены. Сначала выберите auto или cross-runtime в AI settings.${N}"
+    return 1
+  }
+  root="$(journal_root "$PROJECT")/runs"
+  while IFS= read -r candidate; do
+    step="$(basename "$candidate")"; step="${step#request-step-}"; step="${step%.yaml}"
+    [[ "$step" =~ ^[0-9]+$ ]] || continue
+    [[ ! -e "$(dirname "$candidate")/result-step-$step.yaml" ]] || continue
+    request="$candidate"
+    break
+  done < <(find "$root" -type f -path '*/workers/request-step-*.yaml' -print 2>/dev/null | sort -r)
+  [[ -n "$request" && -f "$request" && ! -L "$request" ]] || {
+    echo -e "${Y}Нет pending Worker Request для этого Project.${N}"; return 1;
+  }
+  workers_dir="$(dirname "$request")"
+  run_dir="$(dirname "$workers_dir")"
+  step="$(basename "$request")"; step="${step#request-step-}"; step="${step%.yaml}"
+  [[ "$step" =~ ^[0-9]+$ ]] || return 1
+  [[ -f "$run_dir/plan.md" && ! -L "$run_dir/plan.md" && -f "$run_dir/plan.sha256" && ! -L "$run_dir/plan.sha256" ]] || return 1
+  plan_sha="$(sed -n '1p' "$run_dir/plan.sha256")"
+  [[ "$plan_sha" =~ ^[0-9a-f]{64}$ && "$(sha256sum "$run_dir/plan.md" | awk '{print $1}')" == "$plan_sha" ]] || {
+    echo -e "${R}Frozen execution plan digest mismatch.${N}"; return 1;
+  }
+  frozen_policy="$(awk -F': ' '$1 == "subagents" {print $2; exit}' "$run_dir/plan.md")"
+  frozen_profile="$(awk -F': ' '$1 == "subagent_profile" {print $2; exit}' "$run_dir/plan.md")"
+  frozen_credential_ref="$(awk -F': ' '$1 == "subagent_credential_ref" {print $2; exit}' "$run_dir/plan.md")"
+  frozen_tasks="$(awk -F': ' '$1 == "subagent_tasks" {print $2; exit}' "$run_dir/plan.md")"
+  frozen_max="$(awk -F': ' '$1 == "subagent_max" {print $2; exit}' "$run_dir/plan.md")"
+  [[ "$frozen_policy" == auto || "$frozen_policy" == cross-runtime ]] || return 1
+  valid_menu_index "$frozen_max" 16 || return 1
+  completed_count="$(find "$workers_dir" -maxdepth 1 -type f -name 'result-step-*.yaml' | wc -l)"
+  (( completed_count < frozen_max )) || { echo -e "${Y}Frozen worker limit reached.${N}"; return 1; }
+  request_id="$(awk -F': ' '$1 == "request_id" {print $2; exit}' "$request")"
+  worker_agent="$(awk -F': ' '$1 == "worker_agent" {print $2; exit}' "$request")"
+  kind="$(awk -F': ' '$1 == "kind" {print $2; exit}' "$request")"
+  task_b64="$(awk -F': ' '$1 == "task_b64" {print $2; exit}' "$request")"
+  [[ "$request_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ && -d "$AGENTS/cycle1-dev/$worker_agent" && -f "$AGENTS/cycle1-dev/$worker_agent/CLAUDE.md" ]] || return 1
+  decoded="$(printf '%s' "$task_b64" | base64 -d 2>/dev/null)" || return 1
+  [[ -n "$decoded" && "$decoded" != *$'\n'* ]] || return 1
+  [[ ",$frozen_tasks," == *",$kind,"* ]] || { echo -e "${R}Worker kind is outside the frozen allowlist.${N}"; return 1; }
+  read -rp 'Project-relative read paths, comma-separated (1..64): ' raw
+  IFS=',' read -r -a refs <<<"$raw"
+  (( ${#refs[@]} >= 1 && ${#refs[@]} <= 64 )) || return 1
+  for ref in "${refs[@]}"; do
+    worker_scope_safe_relative "$ref" || { echo -e "${R}Invalid read path: $ref${N}"; return 1; }
+    [[ -e "$(project_path)/$ref" && ! -L "$(project_path)/$ref" ]] || return 1
+    canonical="$(realpath -e -- "$(project_path)/$ref")" || return 1
+    [[ "$canonical" == "$(project_path)/"* ]] || return 1
+  done
+  saved_profile="$(current_profile)"
+  saved_credential_ref="${LOCAL_MODEL_CREDENTIAL_REF:-}"
+  if [[ "$frozen_policy" == cross-runtime ]]; then
+    route_profile="$frozen_profile"
+    [[ "$frozen_credential_ref" == none ]] && frozen_credential_ref=''
+    LOCAL_MODEL_CREDENTIAL_REF="$frozen_credential_ref"
+  else
+    route_profile="$(awk -F': ' -v key="step_${step}_profile" '$1 == key {print $2; exit}' "$run_dir/plan.md")"
+    LOCAL_MODEL_CREDENTIAL_REF=''
+  fi
+  export LOCAL_MODEL_CREDENTIAL_REF
+  apply_profile "$route_profile" || { LOCAL_MODEL_CREDENTIAL_REF="$saved_credential_ref"; export LOCAL_MODEL_CREDENTIAL_REF; apply_profile "$saved_profile" >/dev/null 2>&1 || true; return 1; }
+  route_material="$AGENT_RUNTIME|${LOCAL_AGENT_HOST:-}|${LOCAL_MODEL_PROVIDER:-}|${LOCAL_MODEL:-}|${LOCAL_MODEL_ENDPOINT:-}|${LOCAL_MODEL_CREDENTIAL_REF:-}"
+  route_sha="$(printf '%s' "$route_material" | sha256sum | awk '{print $1}')"
+  printf '%s\n' 'WORKER PREVIEW' \
+    "Project: $(project_path)" "Request: $request_id" "Worker: $worker_agent" \
+    "Route: $route_material" "Kind: $kind" "Task: $decoded" 'Read paths:'
+  printf '  - %s\n' "${refs[@]}"
+  printf '%s\n' 'Writes: denied' 'Memory/provider: denied' 'Nested delegation: denied' 'Fallback: OFF'
+  read -rp "Type RUN WORKER $request_id: " confirm
+  [[ "$confirm" == "RUN WORKER $request_id" ]] || { LOCAL_MODEL_CREDENTIAL_REF="$saved_credential_ref"; export LOCAL_MODEL_CREDENTIAL_REF; apply_profile "$saved_profile"; return 1; }
+  scope="$workers_dir/read-scope-step-$step.tsv"
+  authorization="$workers_dir/authorization-step-$step.tsv"
+  result="$workers_dir/result-step-$step.yaml"
+  [[ ! -e "$scope" && ! -L "$scope" && ! -e "$authorization" && ! -L "$authorization" && ! -e "$result" && ! -L "$result" ]] || {
+    echo -e "${R}Worker handoff already exists; retry requires a new execution run.${N}"; LOCAL_MODEL_CREDENTIAL_REF="$saved_credential_ref"; export LOCAL_MODEL_CREDENTIAL_REF; apply_profile "$saved_profile"; return 1;
+  }
+  printf '%s\n' $'schema_version\tpath' >"$scope"
+  for ref in "${refs[@]}"; do printf '1\t%s\n' "$ref" >>"$scope"; done
+  chmod 600 "$scope"
+  request_sha="$(sha256sum "$request" | awk '{print $1}')"
+  scope_sha="$(sha256sum "$scope" | awk '{print $1}')"
+  printf '%s\n' $'schema_version\trequest_sha256\tread_scope_sha256\troute_sha256' >"$authorization"
+  printf '1\t%s\t%s\t%s\n' "$request_sha" "$scope_sha" "$route_sha" >>"$authorization"
+  chmod 600 "$authorization"
+  auth_sha="$(sha256sum "$authorization" | awk '{print $1}')"
+  if ! SDLC_SUBAGENTS="$frozen_policy" SDLC_SUBAGENT_MAX="$frozen_max" SDLC_SUBAGENT_TASKS="$frozen_tasks" \
+    SDLC_EXECUTION_RUN_DIR="$run_dir" "$SDLC_SUBAGENT_RUNNER" --runtime "$AGENT_RUNTIME" \
+    --agent-dir "$AGENTS/cycle1-dev/$worker_agent" --project-dir "$(project_path)" \
+    --request-file "$request" --request-sha256 "$request_sha" \
+    --read-scope-file "$scope" --read-scope-sha256 "$scope_sha" \
+    --authorization-file "$authorization" --authorization-sha256 "$auth_sha" \
+    --result-file "$result"; then
+    LOCAL_MODEL_CREDENTIAL_REF="$saved_credential_ref"
+    export LOCAL_MODEL_CREDENTIAL_REF
+    apply_profile "$saved_profile" >/dev/null 2>&1 || true
+    return 1
+  fi
+  LOCAL_MODEL_CREDENTIAL_REF="$saved_credential_ref"
+  export LOCAL_MODEL_CREDENTIAL_REF
+  apply_profile "$saved_profile" || return 1
+  echo -e "${G}Worker Result (advisory, не Project artifact):${N} $result"
+  awk -F': ' '$1 == "output_b64" {print $2; exit}' "$result" | base64 -d
+  echo
+}
+
 menu_utilities() {
   header
   echo -e "${W}── Утилиты выбранного проекта ───────────────────────${N}"
@@ -5496,6 +5838,8 @@ menu_utilities() {
   echo -e "  ${Y}4)${N} Structure check ${C}(s0-validate)${N}"
   echo -e "  ${Y}5)${N} Release notes   ${C}(s0-tracker /release-notes vX.Y.Z)${N}"
   echo -e "  ${Y}6)${N} Change Scope    ${C}(L1 impact → S3 architecture → Human Approval)${N}"
+  echo -e "  ${Y}7)${N} Memory          ${C}(Files / Qdrant / Mem0; approval-gated)${N}"
+  echo -e "  ${Y}8)${N} Worker request  ${C}(authorize exact read/route and run advisory worker)${N}"
   echo -e "  ${Y}b)${N} Назад"
   read -rp "$(echo -e "${W}Выбери:${N} ")" choice
   local agent task
@@ -5512,6 +5856,8 @@ menu_utilities() {
       return
       ;;
     6) menu_change_scope_preparation; return ;;
+    7) menu_memory; return ;;
+    8) menu_worker_request; return ;;
     b|B|"") return ;;
     *) return 1 ;;
   esac
@@ -5700,7 +6046,7 @@ menu_settings() {
     [[ "$AGENT_RUNTIME" == "local" ]] &&
       echo -e "  Local:    ${C}$LOCAL_AGENT_HOST / $LOCAL_MODEL_PROVIDER / $LOCAL_MODEL${N}"
     echo -e "  Routing:  ${C}$SDLC_RUNTIME_ROUTING${N}"
-    echo -e "  Workers:  ${C}off — BLOCKED до bounded read enforcement${N}"
+    echo -e "  Workers:  ${C}${SDLC_SUBAGENTS:-off}/${SDLC_SUBAGENT_MAX:-2}${N} — exact read/route handoff"
     if [[ "$SDLC_SUBAGENTS" == "cross-runtime" ]]; then
       echo -e "  Worker:   ${C}$(subagent_profile_label)${N}"
       echo -e "  Tasks:    ${C}$SDLC_SUBAGENT_TASKS${N}"
@@ -5782,6 +6128,7 @@ main() {
   LAUNCHER_SUBAGENTS="$SDLC_SUBAGENTS"
   LAUNCHER_SUBAGENT_MAX="$SDLC_SUBAGENT_MAX"
   LAUNCHER_SUBAGENT_PROFILE="$SDLC_SUBAGENT_PROFILE"
+  LAUNCHER_SUBAGENT_CREDENTIAL_REF="$SDLC_SUBAGENT_CREDENTIAL_REF"
   LAUNCHER_SUBAGENT_TASKS="$SDLC_SUBAGENT_TASKS"
   main_menu
 }

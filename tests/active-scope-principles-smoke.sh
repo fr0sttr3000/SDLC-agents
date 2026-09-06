@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 mapfile -t agents < <(cd "$ROOT" && rg --files cycle1-dev _tools -g 'CLAUDE.md' | sort)
-[[ "${#agents[@]}" -eq 28 ]] || fail "expected 28 active agent contracts, got ${#agents[@]}"
+[[ "${#agents[@]}" -eq 29 ]] || fail "expected 29 active agent contracts, got ${#agents[@]}"
 
 for relative in "${agents[@]}"; do
   dir="$ROOT/${relative%/CLAUDE.md}"
@@ -20,7 +20,7 @@ mapfile -t commands < <(cd "$ROOT" && rg --hidden --files . \
   -g 'cycle1-dev/**/.claude/commands/*.md' \
   -g '_tools/**/.claude/commands/*.md' \
   -g '!cycle2-deploy/**' -g '!cycle3-ops/**' | sort)
-[[ "${#commands[@]}" -eq 64 ]] || fail "expected 64 active command templates, got ${#commands[@]}"
+[[ "${#commands[@]}" -eq 67 ]] || fail "expected 67 active command templates, got ${#commands[@]}"
 
 for command_file in "${commands[@]}"; do
   command_file="$ROOT/${command_file#./}"
@@ -62,12 +62,12 @@ grep -Fq '## Later / Decision gates' "$ROOT/plans/roadmap.md" ||
   fail 'roadmap has no future decision gates'
 ! grep -Fq '## 3. Доступные возможности' "$ROOT/plans/roadmap.md" ||
   fail 'roadmap still contains a delivered capability dump'
-grep -Fq 'SDLC_SUBAGENTS=off' "$ROOT/README.md" ||
-  fail 'worker recovery advice does not use the only supported mode'
+grep -Fq '`SDLC_SUBAGENTS=off` остаётся default' "$ROOT/README.md" ||
+  fail 'README omits fail-safe default worker mode'
 ! grep -Fq 'Worker profile отклонён: используйте Claude' "$ROOT/README.md" ||
   fail 'stale runtime-switch worker advice remains'
-grep -Fq 'subagent-run.sh: BLOCKED / future capability' "$ROOT/OVERVIEW.md" ||
-  fail 'overview diagram still presents workers as available'
+grep -Fq 'subagent-run.sh: authorized bounded read-only worker' "$ROOT/OVERVIEW.md" ||
+  fail 'overview diagram omits the bounded worker boundary'
 grep -Fq '| 5 — Тестирование | `s5-security` |' "$ROOT/CLAUDE.md" ||
   fail 'root role table omits mandatory s5-security'
 grep -Fq 'Authorization Designer — stack-neutral роли, права и enforcement model' "$ROOT/sdlc.sh" ||

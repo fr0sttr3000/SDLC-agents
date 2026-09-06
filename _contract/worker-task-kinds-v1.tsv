@@ -1,0 +1,5 @@
+schema_version	kind	project_write	memory_write	nested_delegation	gate_signing
+1	analysis	deny	deny	deny	deny
+1	research	deny	deny	deny	deny
+1	review	deny	deny	deny	deny
+1	test-interpretation	deny	deny	deny	deny

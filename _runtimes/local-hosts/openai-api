@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Read-only advisory OpenAI Responses API host. It never receives filesystem capabilities.
+
+set -euo pipefail
+
+AGENT_DIR_VALUE=''
+PROJECT_DIR_VALUE=''
+MODE=task
+ACCESS=read-only
+PROMPT=''
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --agent-dir) AGENT_DIR_VALUE="${2:-}"; shift 2 ;;
+    --project-dir) PROJECT_DIR_VALUE="${2:-}"; shift 2 ;;
+    --notes-dir) shift 2 ;;
+    --mode) MODE="${2:-}"; shift 2 ;;
+    --access) ACCESS="${2:-}"; shift 2 ;;
+    --prompt) PROMPT="${2:-}"; shift 2 ;;
+    *) echo "openai-api: unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+fail() { echo "openai-api: BLOCKED: $*" >&2; exit 2; }
+command -v curl >/dev/null 2>&1 || fail 'curl is required'
+command -v jq >/dev/null 2>&1 || fail 'jq is required'
+[[ "$MODE" == task && "$ACCESS" == read-only ]] || fail 'host supports read-only task execution only'
+[[ -d "$AGENT_DIR_VALUE" && -d "$PROJECT_DIR_VALUE" ]] || fail 'exact agent/project identity is required'
+model="${LOCAL_MODEL:-}"
+endpoint="${LOCAL_MODEL_ENDPOINT:-https://api.openai.com/v1}"
+credential="${LOCAL_MODEL_API_KEY:-}"
+[[ -n "$model" && "$model" != *$'\n'* && "$model" != *$'\r'* ]] || fail 'exact model id is required'
+[[ -n "$credential" ]] || fail 'API credential is unavailable'
+[[ "$endpoint" =~ ^https:// || "$endpoint" =~ ^http://(127\.0\.0\.1|localhost)(:[0-9]+)?(/.*)?$ ]] || fail 'endpoint requires HTTPS or loopback HTTP'
+[[ "$endpoint" != *'@'* && "$endpoint" != *'?'* && "$endpoint" != *'#'* ]] || fail 'endpoint must not contain userinfo, query or fragment'
+endpoint="${endpoint%/}"
+[[ "$endpoint" == */v1 ]] || endpoint="$endpoint/v1"
+data="$(jq -cn --arg model "$model" --arg input "$PROMPT" '{model:$model,input:$input,store:false}')"
+response="$(curl --fail-with-body --silent --show-error \
+  --connect-timeout 10 --max-time 60 --max-filesize 16777216 \
+  -H 'Content-Type: application/json' -H "Authorization: Bearer $credential" \
+  --data-binary "$data" "$endpoint/responses")" || fail 'Responses API request failed'
+output="$(jq -r '[.output[]?.content[]? | select(.type == "output_text") | .text] | join("\n")' <<<"$response")"
+[[ -n "$output" ]] || fail 'Responses API returned no output_text'
+printf '%s\n' "$output"

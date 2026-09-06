@@ -12,11 +12,13 @@ sdlc.sh ── Project selector ── Project Console ── Preview / Journal
   │                                      ├─ Cycle 2/3 status (FROZEN / NOT READY)
   │                                      ├─ One Agent
   │                                      ├─ scoped Review / Repair
-  │                                      └─ Utilities / Change Scope / Local Repositories
+  │                                      └─ Utilities / Memory / Change Scope / Local Repositories
   ▼
 runtime routing ── agent-run.sh ── Claude | Codex | Gemini | Local host
                                         │
-                                        └─ subagent-run.sh: BLOCKED / future capability
+                                        └─ subagent-run.sh: authorized bounded read-only worker
+  │
+  └─ memoryctl.sh ── Files | Qdrant | Mem0 OSS | Mem0 Platform
   ▼
 canonical contracts: CLAUDE.md + _standards + command templates
   ▼
@@ -151,12 +153,27 @@ preparation всегда разделена на L1 и S3 процессы и з
 
 ```text
 Primary/Supervisor (sole writer and gate signer)
-  └─ Workers: BLOCKED pending capability-enforced bounded read scope
+  └─ Worker Request + exact read/route authorization
+       └─ isolated read-only worker ──> launcher-owned Worker Result
 ```
 
-Supervisor + Worker остаётся принципом будущего расширения, но не текущей capability.
-`auto|cross-runtime` и прямой worker dispatcher возвращают non-zero; prompt-only `READ_SCOPE`
-не считается изоляцией. Primary runtime запускается с очищенным allowlist environment.
+`off` остаётся default. В `auto|cross-runtime` worker стартует только при совпадении request,
+read-manifest и route digests с launcher authorization. Весь Project не монтируется: Landlock
+разрешает public canon, isolated scratch и exact read paths. Direct/mismatched dispatch,
+Project/memory write, nested delegation и fallback блокируются. Primary runtime также
+запускается с очищенным allowlist environment.
+
+`auto` использует frozen profile соответствующего primary step. `cross-runtime` использует один
+отдельный frozen worker profile на весь execution plan; независимой worker routing matrix по
+этапам или ролям в MVP нет. Connected-memory snapshot и provider access worker-у не выдаются.
+
+### Подключаемая память
+
+Project profile включает только выбранные `planning|defects|architecture` collections.
+`memoryctl.sh` держит provider credentials вне model process, проверяет role ACL и records,
+создаёт immutable per-run snapshot, а agent write принимает только как Proposal v1. Provider
+mutation выполняется после exact Human Approval и read-back; current artifacts/gates выше
+памяти по приоритету.
 
 ## Scoped Review / Repair
 

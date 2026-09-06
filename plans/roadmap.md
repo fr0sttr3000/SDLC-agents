@@ -28,7 +28,7 @@ Roadmap упорядочивает будущие продуктовые рез�
 
 | Инициатива | Ожидаемый результат | Зависимости | Критерий выхода |
 |---|---|---|---|
-| Capability-enforced worker read boundary | Worker получает только доказанный bounded read scope; primary остаётся единственным writer и gate signer | Capability contract, OS/runtime enforcement и per-adapter negative scenarios | Для каждого включаемого adapter есть positive/negative evidence точной read boundary; непроверенные adapters остаются fail-closed |
+| Live external memory integration matrix | Подтвердить реальные Qdrant OSS/Cloud, Mem0 OSS и Mem0 Platform deployments без ослабления provider-neutral broker | Отдельные непроизводственные instances/credentials и явное разрешение на network tests | Для каждого advertised external adapter есть live add/read-back/snapshot/denial evidence; неподтверждённые версии блокируются fail-closed |
 
 ## Later / Decision gates
 

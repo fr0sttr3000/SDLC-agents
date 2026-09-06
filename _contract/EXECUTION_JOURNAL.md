@@ -41,11 +41,16 @@ It records at minimum:
 - action type and exact included/excluded scope;
 - ordered step/agent/command list;
 - effective runtime, host/provider/model status and route source per step;
-- subagent status (`off` for current runs); a legacy `auto|cross-runtime` request is recorded
-  only as a `BLOCKED` reason and never as an enabled worker profile;
+- subagent policy/max and, for `cross-runtime`, exact worker profile/task kinds. Every worker
+  authorization additionally binds request, read-manifest and route SHA-256 inside the run;
+- memory profile SHA-256 and each exact per-step snapshot SHA-256 when memory is used;
 - preconditions/TDD/Gate status known at preview time.
 
 No raw prompt, vendor conversation, secret or model credential is stored.
+
+Worker Request/authorization/Result and memory snapshots are launcher-owned run files, not
+Project artifacts. A worker result or memory snapshot is consumed only by a new isolated
+digest-bound launch; neither vendor session resume nor sibling-agent context sharing is valid.
 
 ## State
 

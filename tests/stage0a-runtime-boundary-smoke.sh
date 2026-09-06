@@ -249,28 +249,26 @@ check_rejected 'unbound continue mode' "$TMP_DIR/continue.out" 'unbound continue
   "$RUNNER" --agent-dir "$ACTIVE_AGENT" --project-dir "$PROJECT_ONE" \
   --mode continue --access write --prompt smoke
 
-check_rejected 'automatic workers' "$TMP_DIR/workers-auto.out" \
-  'BLOCKED: worker execution is disabled' \
+check_accepted 'automatic worker policy on primary' "$TMP_DIR/workers-auto.out" \
   env AGENT_RUNTIME=codex CODEX_BIN="$FAKE_CODEX" SDLC_SUBAGENTS=auto \
   "$RUNNER" --agent-dir "$ACTIVE_AGENT" --project-dir "$PROJECT_ONE" \
   --mode task --access write --prompt smoke
 
-check_rejected 'cross-runtime workers' "$TMP_DIR/workers-cross.out" \
-  'BLOCKED: worker execution is disabled' \
+check_accepted 'cross-runtime worker policy on primary' "$TMP_DIR/workers-cross.out" \
   env AGENT_RUNTIME=codex CODEX_BIN="$FAKE_CODEX" SDLC_SUBAGENTS=cross-runtime \
   SDLC_SUBAGENT_PROFILE='codex||||' SDLC_SUBAGENT_TASKS=analysis \
   "$RUNNER" --agent-dir "$ACTIVE_AGENT" --project-dir "$PROJECT_ONE" \
   --mode task --access write --prompt smoke
 
 check_rejected 'direct active worker invocation' "$TMP_DIR/worker-active.out" \
-  'BLOCKED: worker execution is disabled' \
+  'unknown argument' \
   env SDLC_PROJECTS_DIR="$TMP_DIR/projects" SDLC_SUBAGENT_PROFILE='codex||||' \
   SDLC_SUBAGENT_TASKS=analysis CODEX_BIN="$FAKE_CODEX" \
   "$WORKER_RUNNER" --agent-dir "$ACTIVE_AGENT" --kind analysis --task inspect \
   --read-scope "$PROJECT_ONE" --response-format Markdown
 
 check_rejected 'direct frozen worker target' "$TMP_DIR/worker-frozen.out" \
-  'FROZEN / NOT READY' \
+  'unknown argument' \
   env SDLC_PROJECTS_DIR="$TMP_DIR/projects" SDLC_SUBAGENT_PROFILE='codex||||' \
   SDLC_SUBAGENT_TASKS=analysis CODEX_BIN="$FAKE_CODEX" \
   "$WORKER_RUNNER" --agent-dir "$FROZEN_CYCLE2" --kind analysis --task inspect \

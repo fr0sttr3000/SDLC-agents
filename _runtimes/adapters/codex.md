@@ -55,7 +55,7 @@ Windows and outside the supported platform scope. The PowerShell wrappers preser
 and delegate to the same Bash implementation; no Windows-only SDLC rules exist. Current user
 status and setup guidance remain in `README.md`.
 
-`auto|cross-runtime` workers are currently `BLOCKED`: read-only sandboxing alone does not prove
-an exact bounded read scope. Codex-specific skills or hooks may be added later, but they must not
-become the source of SDLC rules. All rules stay in `_standards/`, root `CLAUDE.md`, agent
-`CLAUDE.md`, and shared command templates.
+Bounded workers are task-only and require launcher-owned request/read-manifest/route
+authorization. Landlock grants only exact manifest paths; Codex additionally uses
+`--sandbox read-only --ephemeral --ignore-user-config`. Direct or mismatched dispatch blocks.
+Codex-specific skills or hooks do not become the source of SDLC rules.

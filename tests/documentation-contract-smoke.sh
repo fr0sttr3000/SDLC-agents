@@ -153,11 +153,11 @@ done
 
 mapfile -d '' -t roles < <(find "$ROOT/cycle1-dev" "$ROOT/_tools" \
   -mindepth 2 -maxdepth 2 -name CLAUDE.md -type f -print0 | sort -z)
-[[ ${#roles[@]} -eq 28 ]] || fail "active role inventory changed: expected=28 actual=${#roles[@]}"
+[[ ${#roles[@]} -eq 29 ]] || fail "active role inventory changed: expected=29 actual=${#roles[@]}"
 
 mapfile -d '' -t commands < <(find "$ROOT/cycle1-dev" "$ROOT/_tools" \
   -path '*/.claude/commands/*.md' -type f -print0 | sort -z)
-[[ ${#commands[@]} -eq 64 ]] || fail "active command inventory changed: expected=64 actual=${#commands[@]}"
+[[ ${#commands[@]} -eq 67 ]] || fail "active command inventory changed: expected=67 actual=${#commands[@]}"
 for command in "${commands[@]}"; do
   rel="$(relative "$command")"
   [[ "$(sed -n '1p' "$command")" == '---' ]] || fail "$rel has no opening frontmatter fence"
@@ -206,7 +206,7 @@ grep -Fq 'artifact-metadata-check.sh' "$ROOT/sdlc.sh" ||
 
 mapfile -d '' -t adapters < <(find "$ROOT/cycle1-dev" "$ROOT/cycle2-deploy" \
   "$ROOT/cycle3-ops" "$ROOT/_tools" -type l -print0 | sort -z)
-[[ ${#adapters[@]} -eq 62 ]] || fail "canonical adapter inventory changed: expected=62 actual=${#adapters[@]}"
+[[ ${#adapters[@]} -eq 64 ]] || fail "canonical adapter inventory changed: expected=64 actual=${#adapters[@]}"
 for adapter in "${adapters[@]}"; do
   rel="$(relative "$adapter")"
   [[ "$(readlink "$adapter")" == CLAUDE.md ]] || fail "$rel does not point to sibling CLAUDE.md"

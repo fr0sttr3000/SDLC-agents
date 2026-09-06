@@ -22,11 +22,12 @@ tags: [plans, principles]
 ### Изолированные роли и файловый handoff
 
 Каждая роль действует в явно заданных границах и передаёт результат через проверяемые файловые
-артефакты, а не через скрытую память или историю диалога. Это делает handoff воспроизводимым и
-аудируемым.
+артефакты, а не через скрытую память или историю диалога. Подключаемая память входит в процесс
+только как immutable digest-bound snapshot, а запись — как Proposal/Approval/Receipt files.
+Это делает handoff воспроизводимым и аудируемым.
 
 Подробнее: [[_contract/GLOBAL#Runtime Invariants]],
-[[_contract/CURRENT_ARTIFACTS_V1#Project current manifest]].
+[[_contract/CURRENT_ARTIFACTS_V1#Project current manifest]], [[_contract/MEMORY_V1]].
 
 ### Границы изменения предшествуют реализации
 
@@ -57,7 +58,7 @@ Runtime, модель, capability и scope выбираются явно. Есл
 Primary остаётся ответственным за запись результата и gate verdict. Любой помощник имеет только
 явно разрешённую advisory capability и не расширяет собственные права.
 
-Подробнее: [[_contract/SUBAGENTS#Инварианты будущего включения]].
+Подробнее: [[_contract/SUBAGENTS#Обязательная граница]], [[_contract/WORKER_HANDOFF_V1]].
 
 ## Принципы платформы
 

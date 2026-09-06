@@ -3,103 +3,58 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sdlc-workers-fail-closed.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sdlc-workers-v1.XXXXXX")"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+RUNNER="$ROOT/_runtimes/subagent-run.sh"
+PROJECT="$TMP_DIR/projects/Alpha"
+RUN_DIR="$TMP_DIR/state/run-1"
+FAKE_CODEX="$TMP_DIR/fake-codex"
+
 fail() { echo "FAIL: $*" >&2; exit 1; }
-assert_contains() { [[ "$1" == *"$2"* ]] || fail "output does not contain: $2"; }
-assert_not_contains() { [[ "$1" != *"$2"* ]] || fail "output unexpectedly contains: $2"; }
 
-export XDG_CONFIG_HOME="$TMP_DIR/config"
-export AGENT_RUNTIME=codex
-export CODEX_BIN=/bin/true
-export SDLC_RUNTIME_ROUTING=single
-export SDLC_SUBAGENTS=off
-export SDLC_SUBAGENT_MAX=2
-
-source "$ROOT/sdlc.sh"
-
-for fn in render_subagent_execution_summary render_subagent_mode_choice \
-  configure_subagent_settings ensure_subagent_settings configure_cross_runtime_subagents; do
-  declare -F "$fn" >/dev/null || fail "missing fail-closed worker function: $fn"
+required_files=("$ROOT/_contract/WORKER_HANDOFF_V1.md" "$RUNNER")
+for required in "${required_files[@]}"; do
+  [[ -f "$required" ]] || fail "missing worker contract/runtime: $required"
 done
 
-choice="$(render_subagent_mode_choice first-run)"
-assert_contains "$choice" 'Шаг 2 из 2 — статус AI-помощников'
-assert_contains "$choice" 'Workers временно недоступны'
-assert_contains "$choice" 'Prompt-only ограничение недостаточно'
-assert_contains "$choice" 'единственный доступный режим'
-assert_not_contains "$choice" 'Помощники той же AI-системы'
-assert_not_contains "$choice" 'Отдельная AI-модель как помощник'
+mkdir -p "$PROJECT/stage1-planning/inputs" "$PROJECT/stage1-planning/outputs" "$RUN_DIR/workers"
+printf '%s\n' 'allowed input' >"$PROJECT/stage1-planning/inputs/idea.md"
+printf '%s\n' 'FORBIDDEN-CANARY' >"$PROJECT/stage1-planning/outputs/private.md"
 
-summary="$(render_subagent_execution_summary)"
-assert_contains "$summary" 'Workers: BLOCKED until capability-enforced bounded read scope exists'
-assert_contains "$summary" 'Fallback: OFF'
+request="$RUN_DIR/workers/request-step-1.yaml"
+task_b64="$(printf '%s' 'Review the allowed project input.' | base64 | tr -d '\n')"
+printf '%s\n' 'schema_version: 1' 'request_id: WORKER-REQ-001' 'primary_run_id: run-1' 'supervisor_agent: s1-pm' 'worker_agent: s1-pm' 'kind: review' "task_b64: $task_b64" 'response_format: markdown' >"$request"
+request_sha="$(sha256sum "$request" | awk '{print $1}')"
 
-SDLC_SUBAGENTS=off
-SDLC_SUBAGENT_PROFILE='legacy||||'
-SDLC_SUBAGENT_TASKS=analysis
-configure_subagent_settings >/dev/null
-[[ "$SDLC_SUBAGENTS" == off ]] || fail 'worker configurator did not force off'
-[[ -z "$SDLC_SUBAGENT_PROFILE" ]] || fail 'worker configurator retained a legacy profile'
-[[ -z "$SDLC_SUBAGENT_TASKS" ]] || fail 'worker configurator retained legacy tasks'
+scope="$RUN_DIR/workers/read-scope-step-1.tsv"
+printf '%s\n' $'schema_version\tpath' $'1\tstage1-planning/inputs/idea.md' >"$scope"
+scope_sha="$(sha256sum "$scope" | awk '{print $1}')"
 
-for policy in auto cross-runtime; do
-  SDLC_SUBAGENTS="$policy"
-  if ensure_subagent_settings >"$TMP_DIR/sdlc-$policy.out" 2>&1; then
-    fail "main launcher accepted unsupported worker policy: $policy"
-  fi
-  grep -Fq 'BLOCKED: worker execution' "$TMP_DIR/sdlc-$policy.out" ||
-    fail "main launcher did not explain blocked worker policy: $policy"
-done
+authorization="$RUN_DIR/workers/authorization-step-1.tsv"
+route_sha="$(printf '%s' 'codex|||||' | sha256sum | awk '{print $1}')"
+printf '%s\n' $'schema_version\trequest_sha256\tread_scope_sha256\troute_sha256' >"$authorization"
+printf '1\t%s\t%s\t%s\n' "$request_sha" "$scope_sha" "$route_sha" >>"$authorization"
+authorization_sha="$(sha256sum "$authorization" | awk '{print $1}')"
 
-if configure_cross_runtime_subagents >"$TMP_DIR/configure-cross.out" 2>&1; then
-  fail 'cross-runtime configurator succeeded while workers are disabled'
+printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'if cat stage1-planning/outputs/private.md >/dev/null 2>&1; then echo FORBIDDEN-CANARY; fi' 'if printf write-escape >stage1-planning/inputs/worker-write.md 2>/dev/null; then echo WRITE-ESCAPE; fi' "printf 'Worker saw: '" 'cat stage1-planning/inputs/idea.md' >"$FAKE_CODEX"
+chmod +x "$FAKE_CODEX"
+
+result="$RUN_DIR/workers/result-step-1.yaml"
+SDLC_EXECUTION_RUN_DIR="$RUN_DIR" AGENT_RUNTIME=codex CODEX_BIN="$FAKE_CODEX" SDLC_SUBAGENTS=cross-runtime SDLC_SUBAGENT_MAX=2 SDLC_SUBAGENT_TASKS=review "$RUNNER" --runtime codex --agent-dir "$ROOT/cycle1-dev/s1-pm" --project-dir "$PROJECT" --request-file "$request" --request-sha256 "$request_sha" --read-scope-file "$scope" --read-scope-sha256 "$scope_sha" --authorization-file "$authorization" --authorization-sha256 "$authorization_sha" --result-file "$result" >"$TMP_DIR/worker.out" || fail 'authorized worker failed'
+
+[[ -f "$result" ]] || fail 'worker result file missing'
+grep -Fq 'request_sha256:' "$result" || fail 'worker result is not request-bound'
+grep -Fq 'output_sha256:' "$result" || fail 'worker result lacks output digest'
+decoded="$(awk -F': ' '$1 == "output_b64" {print $2}' "$result" | base64 -d)"
+[[ "$decoded" == *'Worker saw: allowed input'* ]] || fail 'worker did not read allowed input'
+[[ "$decoded" != *'FORBIDDEN-CANARY'* ]] || fail 'worker read outside exact scope'
+[[ "$decoded" != *'WRITE-ESCAPE'* ]] || fail 'worker wrote to Project'
+[[ ! -e "$PROJECT/stage1-planning/inputs/worker-write.md" ]] || fail 'worker write persisted'
+
+if SDLC_EXECUTION_RUN_DIR="$RUN_DIR" AGENT_RUNTIME=codex CODEX_BIN="$FAKE_CODEX" "$RUNNER" --runtime codex --agent-dir "$ROOT/cycle1-dev/s1-pm" --project-dir "$PROJECT" --request-file "$request" --request-sha256 "$request_sha" --read-scope-file "$scope" --read-scope-sha256 "$scope_sha" --result-file "$TMP_DIR/direct.yaml" >"$TMP_DIR/direct.out" 2>&1; then
+  fail 'direct worker invocation bypassed launcher authorization'
 fi
-grep -Fq 'BLOCKED: cross-runtime workers' "$TMP_DIR/configure-cross.out" ||
-  fail 'cross-runtime configurator did not return a clear BLOCKED reason'
+grep -Fq 'authorization' "$TMP_DIR/direct.out" || fail 'direct worker rejection is unclear'
 
-PROJECTS="$TMP_DIR/projects"
-PROJECT=Alpha
-mkdir -p "$PROJECTS/$PROJECT/tracking"
-BASE_PROFILE='codex||||'
-SDLC_SUBAGENTS=off
-save_project_ai_config "$BASE_PROFILE" single || fail 'off project worker policy was not persisted'
-SDLC_SUBAGENTS=auto
-if save_project_ai_config "$BASE_PROFILE" single; then
-  fail 'unsupported worker policy was persisted in project config'
-fi
-
-for policy in auto cross-runtime; do
-  if AGENT_RUNTIME=codex CODEX_BIN=/bin/true SDLC_SUBAGENTS="$policy" \
-    SDLC_SUBAGENT_PROFILE='codex||||' SDLC_SUBAGENT_TASKS=analysis \
-    "$ROOT/_runtimes/agent-run.sh" --agent-dir "$ROOT/cycle1-dev/s1-pm" \
-      --project-dir "$PROJECTS/$PROJECT" --mode task --prompt smoke \
-      >"$TMP_DIR/dispatcher-$policy.out" 2>&1; then
-    fail "dispatcher accepted unsupported worker policy: $policy"
-  fi
-  if ! grep -Fq 'BLOCKED: worker execution is disabled' "$TMP_DIR/dispatcher-$policy.out"; then
-    sed 's/^/dispatcher: /' "$TMP_DIR/dispatcher-$policy.out" >&2
-    fail "dispatcher did not explain blocked worker policy: $policy"
-  fi
-done
-
-if SDLC_PROJECTS_DIR="$PROJECTS" SDLC_SUBAGENT_PROFILE='codex||||' \
-  SDLC_SUBAGENT_TASKS=analysis CODEX_BIN=/bin/true \
-  bash "$ROOT/_runtimes/subagent-run.sh" --agent-dir "$ROOT/cycle1-dev/s1-pm" \
-    --kind analysis --task inspect --read-scope "$PROJECTS/$PROJECT" \
-    --response-format Markdown >"$TMP_DIR/direct-worker.out" 2>&1; then
-  fail 'direct worker invocation succeeded'
-fi
-grep -Fq 'BLOCKED: worker execution is disabled' "$TMP_DIR/direct-worker.out" ||
-  fail 'direct worker invocation did not return a clear BLOCKED reason'
-
-XDG_CONFIG_HOME="$TMP_DIR/localrun-config" AGENT_RUNTIME=codex CODEX_BIN=/bin/true \
-SDLC_RUNTIME_ROUTING=single SDLC_SUBAGENTS=cross-runtime SDLC_SUBAGENT_MAX=2 \
-  bash -c 'source "$1"; ensure_subagent_settings' _ "$ROOT/localrun.sh" \
-  >"$TMP_DIR/localrun-cross.out" 2>&1 &&
-  fail 'Local Run accepted unsupported cross-runtime workers'
-grep -Fq 'BLOCKED: worker execution' "$TMP_DIR/localrun-cross.out" ||
-  fail 'Local Run did not explain blocked workers'
-
-echo 'PASS: workers fail-closed smoke'
+echo 'PASS: supervisor worker subagents smoke'

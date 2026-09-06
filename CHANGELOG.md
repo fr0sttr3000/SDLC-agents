@@ -1,5 +1,5 @@
 ---
-date: 2026-08-23
+date: 2026-09-01
 tags:
   - docs
   - changelog
@@ -14,6 +14,44 @@ tags:
 ## [Unreleased]
 
 Пока без записей.
+
+## [2.002.000] — 2026-09-01
+
+### Added
+
+- Project-scoped connected memory MVP for user-approved planning/project-vision, architecture
+  and known-defect records. The broker provides ACL-filtered snapshots, proposal/approval flow,
+  canonical read-back and a dedicated `s0-defects` role without sharing hidden chat context.
+- Optional bounded advisory workers for Claude, Codex, local `codex-oss` and the read-only OpenAI
+  Responses API host. Primary and worker providers can be selected independently where the
+  capability registry permits that route.
+- `sdlc-task.sh` as the vendor-neutral explicit CLI for memory and worker handoffs from Codex,
+  Claude Code, Gemini or another supported task shell. Full primary execution remains launcher-owned through `sdlc.sh`.
+
+### Security
+
+- Connected memory remains disabled by default. Provider credentials stay launcher-side; model
+  runtimes receive only approved, role-filtered file snapshots and submit writes as proposals.
+- Worker handoff is restricted to an exact digest-bound read manifest. Workers cannot write
+  Project artifacts, approve memory, sign gates, inherit chat history or trigger another agent.
+- Primary memory is runtime-independent, while workers receive neither connected-memory snapshots
+  nor direct memory-provider access.
+- OpenAI advisory requests now have bounded connection time, total time and response size.
+
+### Fixed
+
+- Mem0 Platform v3 writes accept the current `SUCCEEDED` terminal status while missing, failed or
+  unknown statuses remain fail-closed before canonical read-back.
+- Mem0 OSS and Platform adapters preserve padded canonical base64 fields when extracting record
+  content for exact-storage requests.
+- Corrected the README description of the operator-only pull workflow.
+
+### Compatibility
+
+- `files-v1` is the local baseline. `qdrant-v1`, `mem0-oss-v1` and `mem0-platform-v1` are
+  supported adapters subject to deployment-specific live validation described in the user guide.
+- Gemini remains primary-only in this MVP. Live external-memory deployments, live Codex App E2E
+  and real Windows execution remain outside the verified compatibility matrix.
 
 ## [2.001.001] — 2026-08-23
 
@@ -661,7 +699,10 @@ tags:
 
 ---
 
-[Unreleased]: https://github.com/fr0sttr3000/Claude-SDLC-agents/compare/v2.000.004...HEAD
+[Unreleased]: https://github.com/fr0sttr3000/Claude-SDLC-agents/compare/v2.002.000...HEAD
+[2.002.000]: https://github.com/fr0sttr3000/Claude-SDLC-agents/compare/v2.001.001...v2.002.000
+[2.001.001]: https://github.com/fr0sttr3000/Claude-SDLC-agents/compare/v2.001.000...v2.001.001
+[2.001.000]: https://github.com/fr0sttr3000/Claude-SDLC-agents/compare/v2.000.004...v2.001.000
 [2.000.004]: https://github.com/fr0sttr3000/Claude-SDLC-agents/compare/v2.000.003...v2.000.004
 [2.000.003]: https://github.com/fr0sttr3000/Claude-SDLC-agents/compare/v2.000.002...v2.000.003
 [2.000.002]: https://github.com/fr0sttr3000/Claude-SDLC-agents/compare/v2.000.001...v2.000.002

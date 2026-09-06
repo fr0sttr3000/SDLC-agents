@@ -16,7 +16,7 @@ check_root() {
   while IFS= read -r name; do
     case "$name" in
       .gitignore|AGENTS.md|CHANGELOG.md|CLAUDE.md|GEMINI.md|OVERVIEW.md|README.md|\
-      RELEASE_NOTES_v*.md|localrun.ps1|localrun.sh|sdlc.ps1|sdlc.sh) ;;
+      RELEASE_NOTES_v*.md|localrun.ps1|localrun.sh|sdlc.ps1|sdlc.sh|sdlc-task.sh) ;;
       *) echo "ROOT INVENTORY BLOCKED: unexpected public root file: $name" >&2; return 1 ;;
     esac
     [[ -s "$root/$name" ]] || {
@@ -30,7 +30,7 @@ check_root() {
     return 1
   done < <(find "$root" -maxdepth 1 -mindepth 1 ! -type f ! -type d -printf '%f\n' | sort)
 
-  for launcher in sdlc.sh localrun.sh; do
+  for launcher in sdlc.sh localrun.sh sdlc-task.sh; do
     [[ -x "$root/$launcher" ]] || {
       echo "ROOT INVENTORY BLOCKED: launcher is not executable: $launcher" >&2
       return 1
@@ -53,7 +53,8 @@ mkdir -p "$FIXTURE"
 printf '%s\n' '# fixture' > "$FIXTURE/README.md"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$FIXTURE/sdlc.sh"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$FIXTURE/localrun.sh"
-chmod +x "$FIXTURE/sdlc.sh" "$FIXTURE/localrun.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$FIXTURE/sdlc-task.sh"
+chmod +x "$FIXTURE/sdlc.sh" "$FIXTURE/localrun.sh" "$FIXTURE/sdlc-task.sh"
 check_root "$FIXTURE" || fail 'known root names were rejected'
 
 : > "$FIXTURE/README.md"

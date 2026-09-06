@@ -99,7 +99,7 @@ integrated terminal настраиваются отдельно; после см
 | Cycle 2 — Deploy | **FROZEN / NOT READY** | historical code сохранён, execution route отсутствует |
 | Cycle 3 — Operations | **FROZEN / NOT READY** | historical code сохранён, execution route отсутствует |
 
-Подготовленный platform release: [v2.001.001](RELEASE_NOTES_v2.001.001.md).
+Подготовленный platform release: [v2.002.000](RELEASE_NOTES_v2.002.000.md).
 Он имеет статус `PREPARED / NOT PUBLISHED` до отдельного commit/tag/publication action.
 
 Cycle 1 содержит 28 обязательных шагов. Launcher показывает immutable ordered plan до запуска и
@@ -142,9 +142,23 @@ Routing определяет, какой primary используется для
 | `per-agent` | базовый profile и exact overrides ролей |
 | `ask` | назначения всех шагов собираются до Preview |
 
-Workers сейчас недоступны: исполняемый режим — только `SDLC_SUBAGENTS=off`. `Auto`,
-`Supervisor + Worker` и прямой worker dispatcher завершаются fail-closed как `BLOCKED`, пока не
-появится проверяемый bounded read scope на уровне runtime/OS.
+Workers опциональны: `SDLC_SUBAGENTS=off` остаётся default, `auto` использует тот же exact
+поддержанный route, `cross-runtime` — отдельный exact worker profile. Worker получает только
+digest-bound read manifest в новом read-only process; Project/memory writes, gates, approvals,
+nested delegation и silent fallback запрещены. Gemini CLI поддерживается как primary, но пока
+не как worker: его adapter не доказывает read-only capability.
+
+`auto` следует exact primary profile конкретного шага.
+`cross-runtime` фиксирует один frozen worker profile на execution plan; отдельная
+per-stage/per-agent worker-profile matrix в MVP
+отсутствует. Workers не получают connected-memory snapshots или provider access: память доступна
+только primary через launcher-owned ACL-filtered snapshot.
+
+При `auto|cross-runtime` primary может записать только Worker Request v1 в process-local
+handoff. После шага откройте `Utilities → Worker request`, задайте 1..64 exact Project-relative
+read paths и подтвердите `RUN WORKER <id>`. Launcher привязывает request/read-scope/route
+digests, запускает новый read-only process и сохраняет advisory Worker Result вне Project.
+Результат не передаётся через vendor conversation и не применяется автоматически primary.
 
 Codex и встроенный `codex-oss` работают только в task mode через зарегистрированные команды.
 Каждый такой шаг запускает новый `codex exec --ignore-user-config --ephemeral`; вложенный
@@ -165,6 +179,21 @@ bash sdlc.sh
 
 Встроенный `codex-oss` поддерживает Ollama и LM Studio. Silent fallback и default model
 отсутствуют: недоступный exact profile блокирует запуск.
+
+### Подключаемая долговременная память
+
+Память выключена по умолчанию и настраивается на Project через
+`Project Console → Utilities → Memory` либо общий CLI `sdlc-task.sh`. Полностью локальный
+baseline — Files; также поставляются fail-closed protocol adapters для Qdrant, Mem0 OSS и
+Mem0 Platform. Совместимость конкретного external deployment подтверждается `doctor` и live
+read-back; Mem0 OSS дополнительно обязан доказанно исполнять `infer=false`. Agents получают
+только user-approved immutable snapshot;
+запись идёт через Proposal v1, отдельный Human Approval и provider read-back. Provider не
+зависит от выбранных Claude/Codex/Gemini/local routes.
+
+Краткая настройка, примеры для обычного script, Codex, Claude Code, Gemini и ChatGPT/Codex App:
+[`_contract/MEMORY_USER_GUIDE.md`](_contract/MEMORY_USER_GUIDE.md).
+Актуальный verdict и условия live-поддержки: [`_contract/MEMORY_MVP_AUDIT.md`](_contract/MEMORY_MVP_AUDIT.md).
 
 ## Project Console
 
@@ -304,8 +333,8 @@ manifest и не выполняет внешнюю публикацию, build, 
 - Launcher передаёт runtime только выбранный Project scope и разрешённые дополнительные пути.
   Если runtime-защита недоступна, dispatch завершается fail-closed.
 - Primary agents не изменяют repository history, remotes или branches и не создают commits,
-  pushes, pull requests или tags. Поддерживаемый pull показывает оператору Preview, но
-  поддерживаемого pull, но VCS control-plane не передаётся продуктовому agent runtime.
+  pushes, pull requests или tags. Поддерживаемый pull выполняется только операторским workflow
+  после Preview; VCS control-plane не передаётся продуктовому agent runtime.
 - Не используйте `danger-full-access` как обход ошибки sandbox. Исправьте поддерживаемую
   Linux/WSL2 sandbox configuration либо запустите launcher из отдельного terminal в том же
   checkout.
@@ -327,8 +356,10 @@ manifest и не выполняет внешнюю публикацию, build, 
 
 - Runtime binary или Local model недоступен: исправьте exact profile/model id; другой profile
   автоматически не выбирается.
-- Worker profile отклонён: установите `SDLC_SUBAGENTS=off`; смена primary runtime не снимает
-  capability block workers.
+- Worker `BLOCKED`: проверьте exact route, request/read-scope/authorization digests и поддержку
+  bounded read-only выбранным adapter; fallback на primary или другую модель не выполняется.
+- Memory `BLOCKED`: запустите `bash sdlc-task.sh memory profile-check ...` и `doctor ...`;
+  проверьте role ACL, source digest и `pass:` reference, не вставляя secret value в Project.
 - Prompt отклонён как secret-like: удалите значение и передайте только ссылку на `pass`.
 - Gate/DoR/DoD `BLOCKED`: откройте названный evidence id и исправьте причину; не ослабляйте
   threshold или test.
